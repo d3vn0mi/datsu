@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datsu"
+version = "0.1.0"
+description = "Detect (read-only) and, when authorized, exploit Docker & Kubernetes container-escape conditions on a node."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "d3vn0mi"}]
+keywords = ["security", "kubernetes", "docker", "container-escape", "pentest", "hardening"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = []   # stdlib only; uses docker/kubectl/jq/curl at runtime as external tools
+
+[project.urls]
+Homepage = "https://github.com/d3vn0mi/datsu"
+
+[project.scripts]
+datsu = "datsu.cli:main"
+
+[tool.setuptools]
+packages = ["datsu"]
