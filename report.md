@@ -1,18 +1,18 @@
 # datsu validation report
 
-**Run marker:** `RS_lab2`  ·  **When:** 2026-10-08 08:04
+**Run marker:** `RS_lab2`  ·  **When:** 2026-10-08 09:09
 
 Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2** — can datsu exploit it? Each armed on a disposable lab, torn down after.
 
 ## Summary
 
 - Scenarios validated: **93**
-- Q1 detection: **67 detected** (armed), 0 present ambient, **2 missed**
-- Q2 exploitation: **15 exploited**, 17 failed, 61 N/A-by-design (version / precondition / n-a)
+- Q1 detection: **68 detected** (armed), 0 present ambient, **2 missed**
+- Q2 exploitation: **26 exploited**, 17 failed, 50 N/A-by-design (version / precondition / n-a)
 
 | Scenario | Vector | Sev | Q1 detect | Q2 exploit |
 |----|----|----|----|----|
-| DK-01 | privileged container (docker run --privileged) | CRITICAL | ✅ detected | ❌ FAILED |
+| DK-01 | privileged container (docker run --privileged) | CRITICAL | ✅ detected | ✅ exploited |
 | DK-02 | docker.sock bind-mounted into a container | CRITICAL | ✅ detected | ✅ exploited |
 | DK-03 | SYS_ADMIN + cgroup v1 release_agent breakout | HIGH | ✅ detected | — N/A by design |
 | DK-04 | SYS_MODULE capability | HIGH | ✅ detected | — N/A by design |
@@ -20,7 +20,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 | DK-06 | SYS_PTRACE + hostPID | HIGH | ✅ detected | — N/A by design |
 | DK-07 | sensitive bind mount (-v /:/host) | HIGH | ✅ detected | ✅ exploited |
 | DK-08 | host device exposed (--device or /dev bind) | HIGH | ✅ detected | ✅ exploited |
-| DK-09 | host network + IPC namespaces | HIGH | ✅ detected | ❌ FAILED |
+| DK-09 | host network + IPC namespaces | HIGH | ✅ detected | ✅ exploited |
 | DK-10 | seccomp unconfined | HIGH | ✅ detected | ✅ exploited |
 | DK-11 | no-new-privs off + setuid-root helper | HIGH | ✅ detected | ❌ FAILED |
 | DK-12 | dockerd exposed on tcp/2375 | CRITICAL | — absent (arm to test) | ❌ FAILED |
@@ -52,14 +52,14 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 | DK-38 | host /lib/modules or /boot bind-mounted | HIGH | ✅ detected | — N/A by design |
 | K8-01 | ServiceAccount bound to a Role granting create pods | CRITICAL | ✅ detected | ✅ exploited |
 | K8-02 | privileged pod | CRITICAL | ✅ detected | ❌ FAILED |
-| K8-03 | hostPath mount of / | CRITICAL | ✅ detected | ❌ FAILED |
+| K8-03 | hostPath mount of / | CRITICAL | ❌ MISSED | ❌ FAILED |
 | K8-04 | hostPID/hostNetwork/hostIPC pod | HIGH | ✅ detected | ❌ FAILED |
 | K8-05 | privileged DaemonSet | HIGH | ✅ detected | ❌ FAILED |
 | K8-06 | kubelet :10250 anonymous-auth | HIGH | ✅ detected | ✅ exploited |
 | K8-07 | namespace without PSA enforce=restricted | HIGH | ✅ detected | ❌ FAILED |
 | K8-08 | NET_RAW ARP/DNS spoof between co-located pods | MEDIUM | ✅ detected | ❌ FAILED |
-| K8-09 | embedded etcd read bypassing RBAC | CRITICAL | ❌ MISSED | ❌ FAILED |
-| K8-10 | static-pod manifest directory writable | HIGH | ✅ detected | ✅ exploited |
+| K8-09 | embedded etcd read bypassing RBAC | CRITICAL | ✅ detected | ❌ FAILED |
+| K8-10 | static-pod manifest directory writable | HIGH | ✅ detected | ❌ FAILED |
 | K8-11 | node admin kubeconfig left group/world-readable | HIGH | ✅ detected | ✅ exploited |
 | K8-12 | apiserver anonymous-auth | CRITICAL | ❌ MISSED | ❌ FAILED |
 | K8-13 | system:anonymous bound to a ClusterRole | CRITICAL | ✅ detected | ✅ exploited |
@@ -68,17 +68,17 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 | K8-16 | ClusterRole grants escalate/bind | HIGH | ✅ detected | ✅ exploited |
 | K8-17 | Secrets stored unencrypted in etcd | MEDIUM | ✅ detected | ❌ FAILED |
 | K8-18 | pidfd FD-steal (seccomp unset + namespace not Restri | HIGH | ⚠️ inconclusive | — N/A by design |
-| K8-19 | SA can create pods/exec (exec into any pod) | HIGH | ✅ detected | — N/A by design |
-| K8-20 | SA can create pods/attach (attach to any pod) | HIGH | ✅ detected | — N/A by design |
-| K8-21 | SA can read Secrets cluster-wide (get/list secrets) | CRITICAL | ✅ detected | — N/A by design |
-| K8-22 | SA can create serviceaccounts/token (TokenRequest) | HIGH | ✅ detected | — N/A by design |
-| K8-23 | SA granted impersonate (users/groups/serviceaccounts | CRITICAL | ✅ detected | — N/A by design |
-| K8-24 | SA can approve certificatesigningrequests | CRITICAL | ✅ detected | — N/A by design |
-| K8-25 | SA can create pod-spawning workloads (Deployments/Jo | CRITICAL | ✅ detected | — N/A by design |
-| K8-26 | SA granted nodes/proxy (reach each node's kubelet) | CRITICAL | ✅ detected | — N/A by design |
-| K8-27 | SA can create mutatingwebhookconfigurations | CRITICAL | ✅ detected | — N/A by design |
-| K8-28 | SA can create validatingwebhookconfigurations | HIGH | ✅ detected | — N/A by design |
-| K8-29 | SA bound to a wildcard rule (apiGroups/resources/ver | CRITICAL | ✅ detected | — N/A by design |
+| K8-19 | SA can create pods/exec (exec into any pod) | HIGH | ✅ detected | ✅ exploited |
+| K8-20 | SA can create pods/attach (attach to any pod) | HIGH | ✅ detected | ✅ exploited |
+| K8-21 | SA can read Secrets cluster-wide (get/list secrets) | CRITICAL | ✅ detected | ✅ exploited |
+| K8-22 | SA can create serviceaccounts/token (TokenRequest) | HIGH | ✅ detected | ❌ FAILED |
+| K8-23 | SA granted impersonate (users/groups/serviceaccounts | CRITICAL | ✅ detected | ❌ FAILED |
+| K8-24 | SA can approve certificatesigningrequests | CRITICAL | ✅ detected | ✅ exploited |
+| K8-25 | SA can create pod-spawning workloads (Deployments/Jo | CRITICAL | ✅ detected | ✅ exploited |
+| K8-26 | SA granted nodes/proxy (reach each node's kubelet) | CRITICAL | ✅ detected | ✅ exploited |
+| K8-27 | SA can create mutatingwebhookconfigurations | CRITICAL | ✅ detected | ✅ exploited |
+| K8-28 | SA can create validatingwebhookconfigurations | HIGH | ✅ detected | ✅ exploited |
+| K8-29 | SA bound to a wildcard rule (apiGroups/resources/ver | CRITICAL | ✅ detected | ✅ exploited |
 | K8-30 | kubelet read-only port :10255 exposed | HIGH | ✅ detected | ✅ exploited |
 | K8-31 | network-reachable etcd (2379/2380) without client-ce | CRITICAL | — absent (arm to test) | ❌ FAILED |
 | K8-32 | kubelet authorization-mode=AlwaysAllow | CRITICAL | ✅ detected | — N/A by design |
@@ -103,7 +103,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 | K8-51 | imagePullSecrets / dockerconfigjson present (registr | MEDIUM | — absent (arm to test) | — N/A by design |
 | K8-52 | secrets embedded in ConfigMaps / container env liter | HIGH | — absent (arm to test) | — N/A by design |
 | K8-53 | unpinned / mutable image references (:latest or no d | MEDIUM | ✅ detected | — N/A by design |
-| K8-54 | legacy Helm v2 Tiller in-cluster (unauthenticated :4 | CRITICAL | — absent (arm to test) | ❌ FAILED |
+| K8-54 | legacy Helm v2 Tiller in-cluster (unauthenticated :4 | CRITICAL | ✅ detected | ✅ exploited |
 | K8-NA | cloud IMDS (169.254.169.254) — not present on Proxmo | INFO | — absent (arm to test) | — N/A by design |
 
 ## Per-scenario detail
@@ -114,7 +114,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** A container started with --privileged (all caps, no seccomp/apparmor, device access).
 - **Q1 — detect precondition:** ✅ detected — `/datsu-arm-dk15`
-- **Q2 — exploit:** ❌ FAILED — `host /root write via --privileged + nsenter -t1 (ESCAPE_DK-01_RS_lab2)`
+- **Q2 — exploit:** ✅ exploited — `host /root write via --privileged + nsenter -t1 (ESCAPE_DK-01_RS_lab2)`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -234,7 +234,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** A container sharing host network and IPC namespaces (--network=host --ipc=host).
 - **Q1 — detect precondition:** ✅ detected — `/datsu-arm-dk-09`
-- **Q2 — exploit:** ❌ FAILED — `host-only ports (6443/10250 hex) visible from container (ESCAPE_DK-09_RS_lab2): none-seen`
+- **Q2 — exploit:** ✅ exploited — `host-only apiserver:6443 / kubelet:10250 reachable from --network=host container (ESCAPE_DK-09_RS_lab2): {`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -263,7 +263,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *docker · HIGH · config/concrete · triage B10*
 
 - **Preconditions:** A container with a setuid-root helper reachable by a non-root user (no-new-privs off).
-- **Q1 — detect precondition:** ✅ detected — `19d8d4906424:/usr/local/bin/esc-helper`
+- **Q1 — detect precondition:** ✅ detected — `fd239c19c5c9:/usr/local/bin/esc-helper`
 - **Q2 — exploit:** ❌ FAILED — `uid-1000 user -> root via setuid helper (ESCAPE_DK-11_RS_lab2):`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -543,7 +543,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** A container with a writable host /sys (or /sys/fs/cgroup) bind-mount.
 - **Q1 — detect precondition:** ✅ detected — `/datsu-arm-dk-32`
-- **Q2 — exploit:** ✅ exploited — `writable host /sys reachable from container 28b12283b84f8668e7971f9766307c7088e98c4832ceeee91dd1edf63841a532 (ESCAPE_DK-32_RS_lab2)`
+- **Q2 — exploit:** ✅ exploited — `writable host /sys reachable from container a221a4e747f64ef125f5559a389bb8894fe1760d7b60765df9e230f6a7cf94c1 (ESCAPE_DK-32_RS_lab2)`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -669,7 +669,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · CRITICAL · config/concrete · triage D2*
 
 - **Preconditions:** A privileged pod (securityContext.privileged=true).
-- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-02`
+- **Q1 — detect precondition:** ✅ detected — `esc-x/esc-x-k801`
 - **Q2 — exploit:** ❌ FAILED — `privileged pod -> host /root via nsenter (ESCAPE_K8-02_RS_lab2)`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -684,7 +684,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · CRITICAL · config/concrete · triage D2*
 
 - **Preconditions:** A pod with a hostPath volume mounting the node root (/).
-- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-03`
+- **Q1 — detect precondition:** ❌ MISSED
 - **Q2 — exploit:** ❌ FAILED — `hostPath / pod wrote node /root (ESCAPE_K8-03_RS_lab2)`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -699,7 +699,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · HIGH · config/documented · triage D2*
 
 - **Preconditions:** A pod sharing host PID/Network/IPC namespaces.
-- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-04`
+- **Q1 — detect precondition:** ✅ detected — `esc-x/esc-x-k801`
 - **Q2 — exploit:** ❌ FAILED — `hostPID pod sees node PID 1 (ESCAPE_K8-04_RS_lab2):`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -735,7 +735,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** kubelet :10250 with anonymous-auth=true (control-plane reconfigure — not auto-armed).
 - **Q1 — detect precondition:** ✅ detected — `kubelet /pods -> 200`
-- **Q2 — exploit:** ✅ exploited — `anon kubelet /pods (ESCAPE_K8-06_RS_lab2): {"kind":"PodList","apiVersion":"v1","metadata":{},"items":[{"metadata":{"name":"helm-install-traefik-zlqgr","generate`
+- **Q2 — exploit:** ✅ exploited — `anon kubelet /pods (ESCAPE_K8-06_RS_lab2): {"kind":"PodList","apiVersion":"v1","metadata":{},"items":[{"metadata":{"name":"metrics-server-6dc596dfb8-drt7r","gen`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -764,7 +764,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · MEDIUM · config/documented*
 
 - **Preconditions:** Two running pods retaining NET_RAW on a shared pod network.
-- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-02`
+- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-34`
 - **Q2 — exploit:** ❌ FAILED — `NET_RAW L2 probe pod-a -> pod-b  (ESCAPE_K8-08_RS_lab2):`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -779,7 +779,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · CRITICAL · config/documented · triage D14*
 
 - **Preconditions:** A Secret stored in the node's embedded etcd (on-disk db root-readable).
-- **Q1 — detect precondition:** ❌ MISSED
+- **Q1 — detect precondition:** ✅ detected — `readable etcd db: /var/lib/rancher/k3s/server/db/etcd/member/snap/db`
 - **Q2 — exploit:** ❌ FAILED — `Secret canary read in cleartext from on-disk etcd (ESCAPE_K8-09_RS_lab2)`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -795,7 +795,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** The k3s server manifests directory left world/group-writable.
 - **Q1 — detect precondition:** ✅ detected — `/var/lib/rancher/k3s/server/manifests 777`
-- **Q2 — exploit:** ✅ exploited — `dropped manifest auto-applied by k3s as root (ESCAPE_K8-10_RS_lab2)`
+- **Q2 — exploit:** ❌ FAILED — `dropped manifest auto-applied by k3s as root (ESCAPE_K8-10_RS_lab2)`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -840,7 +840,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** A ClusterRoleBinding granting system:anonymous a ClusterRole.
 - **Q1 — detect precondition:** ✅ detected — `datsu-arm-k813`
-- **Q2 — exploit:** ✅ exploited — `anonymous cluster read (ESCAPE_K8-13_RS_lab2): pod/datsu-arm-k8-02`
+- **Q2 — exploit:** ✅ exploited — `anonymous cluster read (ESCAPE_K8-13_RS_lab2): pod/datsu-arm-k8-34`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -939,11 +939,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-19 — SA can create pods/exec (exec into any pod)
 
-*k8s · HIGH · config/precondition*
+*k8s · HIGH · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can create pods/exec.
 - **Q1 — detect precondition:** ✅ detected — `SA can exec into pods: datsu-arm:datsu-arm-k8-19-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — grant present; exploited by using the SA token to exec into a pod and pivot — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-19-sa — ESCAPE_K8-19_RS_lab2`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -961,11 +961,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-20 — SA can create pods/attach (attach to any pod)
 
-*k8s · HIGH · config/precondition*
+*k8s · HIGH · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can create pods/attach.
 - **Q1 — detect precondition:** ✅ detected — `SA can attach to pods: datsu-arm:datsu-arm-k8-20-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — grant present; attach to a running container via the SA token — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-20-sa — yes`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -983,11 +983,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-21 — SA can read Secrets cluster-wide (get/list secrets)
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can get/list secrets cluster-wide.
 - **Q1 — detect precondition:** ✅ detected — `SA can read secrets: datsu-arm:datsu-arm-k8-21-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — grant present; read every Secret (SA tokens, TLS keys) with the SA token — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-21-sa — secret/datsu-arm-k809`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1005,11 +1005,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-22 — SA can create serviceaccounts/token (TokenRequest)
 
-*k8s · HIGH · config/precondition*
+*k8s · HIGH · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can create serviceaccounts/token.
 - **Q1 — detect precondition:** ✅ detected — `SA can mint SA tokens: datsu-arm:datsu-arm-k8-22-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — grant present; mint tokens for other ServiceAccounts -> impersonation — targeted.`
+- **Q2 — exploit:** ❌ FAILED — `as datsu-arm:datsu-arm-k8-22-sa — error: failed to`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1027,11 +1027,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-23 — SA granted impersonate (users/groups/serviceaccounts)
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount granted impersonate.
 - **Q1 — detect precondition:** ✅ detected — `SA can impersonate: datsu-arm:datsu-arm-k8-23-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — grant present; impersonate cluster-admin via the SA token — targeted.`
+- **Q2 — exploit:** ❌ FAILED — `as datsu-arm:datsu-arm-k8-23-sa — Error from server (Forbidden): secrets is forbidden: User "system:masters" cannot list resource "secrets" in API group "" in t`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1049,11 +1049,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-24 — SA can approve certificatesigningrequests
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can approve certificatesigningrequests.
 - **Q1 — detect precondition:** ✅ detected — `SA can approve CSRs: datsu-arm:datsu-arm-k8-24-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — create CSR + approve -> mint a client cert for any group incl system:masters — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-24-sa — Warning: resource 'certificatesigningrequests' is not namespace scoped in group 'certificates.k8s.io'`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1071,11 +1071,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-25 — SA can create pod-spawning workloads (Deployments/Jobs/…)
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can create pod-spawning workloads.
 - **Q1 — detect precondition:** ✅ detected — `SA can create workloads: datsu-arm:datsu-arm-k8-25-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — create a Deployment/DaemonSet/Job with a privileged/hostPath pod template -> node root — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-25-sa — deployment.apps/datsu-x-dep created`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1093,11 +1093,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-26 — SA granted nodes/proxy (reach each node's kubelet)
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount granted nodes/proxy.
 - **Q1 — detect precondition:** ✅ detected — `SA can proxy to nodes: datsu-arm:datsu-arm-k8-26-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — proxy to kubelet /exec on any node -> command execution on the node — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-26-sa — ok`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1115,11 +1115,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-27 — SA can create mutatingwebhookconfigurations
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can create mutatingwebhookconfigurations.
 - **Q1 — detect precondition:** ✅ detected — `SA can create mutating webhooks: datsu-arm:datsu-arm-k8-27-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — register a mutating webhook to inject sidecars / tamper every admission -> cluster takeover — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-27-sa — Error from server (NotFound): mutatingwebhookconfigurations.admissionregistration.k8s.io "datsu-x-mwh" not found`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1137,11 +1137,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-28 — SA can create validatingwebhookconfigurations
 
-*k8s · HIGH · config/precondition*
+*k8s · HIGH · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount that can create validatingwebhookconfigurations.
 - **Q1 — detect precondition:** ✅ detected — `SA can create validating webhooks: datsu-arm:datsu-arm-k8-28-sa, datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — register a validating webhook to intercept objects (incl Secrets) or deny security policy — targeted.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-28-sa — Error from server (NotFound): validatingwebhookconfigurations.admissionregistration.k8s.io "datsu-x-vwh" not found`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1159,11 +1159,11 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 ### K8-29 — SA bound to a wildcard rule (apiGroups/resources/verbs *)
 
-*k8s · CRITICAL · config/precondition*
+*k8s · CRITICAL · config/documented*
 
 - **Preconditions:** A non-system ServiceAccount bound to a wildcard RBAC rule (*/*/*).
 - **Q1 — detect precondition:** ✅ detected — `SA has wildcard RBAC: datsu-arm:datsu-arm-k8-29-sa`
-- **Q2 — exploit:** — N/A by design — `not auto-exploited — effective cluster-admin via the SA token.`
+- **Q2 — exploit:** ✅ exploited — `as datsu-arm:datsu-arm-k8-29-sa — secret/datsu-arm-k809`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1185,7 +1185,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 
 - **Preconditions:** kubelet read-only port :10255 enabled (kubelet reconfigure — not auto-armed).
 - **Q1 — detect precondition:** ✅ detected — `kubelet ro-port 10255 -> 200`
-- **Q2 — exploit:** ✅ exploited — `unauth kubelet 10255 /pods (ESCAPE_K8-30_RS_lab2): {"kind":"PodList","apiVersion":"v1","metadata":{},"items":[{"metadata":{"name":"datsu-arm-k8-03","namespace":`
+- **Q2 — exploit:** ✅ exploited — `unauth kubelet 10255 /pods (ESCAPE_K8-30_RS_lab2): {"kind":"PodList","apiVersion":"v1","metadata":{},"items":[{"metadata":{"name":"datsu-arm-k8-45","namespace":`
 - **Reproduce:**
   - *Arm the precondition:*
     ```sh
@@ -1360,7 +1360,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · MEDIUM · config/precondition*
 
 - **Preconditions:** A pod running as root (no runAsNonRoot).
-- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-02`
+- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-34`
 - **Q2 — exploit:** — N/A by design — `not auto-exploited — neither pod nor container sets runAsNonRoot:true — processes run as uid 0, amplifying any other weakness (posture).`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -1501,7 +1501,7 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · MEDIUM · config/precondition*
 
 - **Preconditions:** A pod running an unpinned :latest image.
-- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-02`
+- **Q1 — detect precondition:** ✅ detected — `datsu-arm/datsu-arm-k8-34`
 - **Q2 — exploit:** — N/A by design — `not auto-exploited — images by :latest or a bare tag (no @sha256 digest) are mutable — a registry compromise silently swaps the running code (supply-chain).`
 - **Reproduce:**
   - *Arm the precondition:*
@@ -1516,10 +1516,13 @@ Two questions per scenario: **Q1** — can datsu detect the precondition? **Q2**
 *k8s · CRITICAL · config/documented*
 
 - **Preconditions:** Legacy Helm v2 Tiller deployed in-cluster (not auto-armed).
-- **Q1 — detect precondition:** — absent (arm to test) — `tiller objects: 0`
-- **Q2 — exploit:** ❌ FAILED — `Helm v2 Tiller present (ESCAPE_K8-54_RS_lab2):`
+- **Q1 — detect precondition:** ✅ detected — `tiller objects: 3`
+- **Q2 — exploit:** ✅ exploited — `Helm v2 Tiller present (ESCAPE_K8-54_RS_lab2): kube-system   service/tiller-deploy    ClusterIP      10.43.37.113    <none>          44134/TCP                  `
 - **Reproduce:**
-  - *Arm:* not auto-armable in-harness (version/host-state) — see preconditions above.
+  - *Arm the precondition:*
+    ```sh
+    (control-plane / host-state — armed by the lab setup)
+    ```
   - *Detect:* `datsu detect --only K8-54`
   - *Exploit:* `datsu exploit --id K8-54 --marker <token>`
 
