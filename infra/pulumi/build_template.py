@@ -15,7 +15,8 @@ URL = env["PVE_URL"].rstrip("/"); NODE = env.get("PVE_NODE", "pve")
 TOKEN = f"PVEAPIToken={env['PVE_TOKEN_ID']}={env['PVE_TOKEN_SECRET']}"
 CTX = ssl.create_default_context(); CTX.check_hostname = False; CTX.verify_mode = ssl.CERT_NONE
 TID = int(os.environ.get("DATSU_TEMPLATE_VMID", "9000"))
-IMAGE = "local:import/ubuntu-24.04-server-cloudimg-amd64.qcow2"
+IMAGE = os.environ.get("DATSU_IMAGE", "local:import/ubuntu-24.04-server-cloudimg-amd64.qcow2")
+TNAME = os.environ.get("DATSU_TEMPLATE_NAME", "datsu-lab-template")  # era builds pass e.g. datsu-era-bionic
 
 
 def req(method, path, data=None, raw=None):
@@ -56,7 +57,7 @@ def main():
                 break
             time.sleep(3)
     cfg = {
-        "vmid": TID, "name": "datsu-lab-template", "cores": 4, "memory": 6144, "ostype": "l26",
+        "vmid": TID, "name": TNAME, "cores": 4, "memory": 6144, "ostype": "l26",
         "scsihw": "virtio-scsi-single", "scsi0": f"local:0,import-from={IMAGE},discard=on",
         "ide2": "local:cloudinit", "net0": "virtio,bridge=vmbr1", "agent": "enabled=1",
         "boot": "order=scsi0", "ciupgrade": 0,   # no serial0/vga — the bpg provider needs Sys.Console to set them
