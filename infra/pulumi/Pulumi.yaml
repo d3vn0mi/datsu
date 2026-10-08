@@ -1,0 +1,6 @@
+name: datsu-lab
+runtime:
+  name: python
+  options:
+    virtualenv: venv
+description: Disposable Docker + k3s container-escape-validation lab VM on Proxmox, for datsu.
