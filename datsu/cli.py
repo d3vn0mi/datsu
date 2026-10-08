@@ -149,12 +149,18 @@ def cmd_validate(args):
     print(BANNER)
     print("  ⚠  ARMING real escape conditions + running exploits. Disposable isolated lab ONLY.")
     print(f"  run marker: {args.marker}  ·  scenarios: {len(scns)}\n")
-    records = []
-    for s in scns:
-        rec = _v.validate_scenario(ctx, s, args.marker, settle=args.settle)
-        records.append(rec)
-        q1 = rec["q1"]["result"]; q2 = rec["q2"]["result"]
-        print(f"  {s.id:<6} Q1:{q1:<15} Q2:{q2:<14} {s.vector[:48]}")
+    if getattr(args, "arm_all", False):
+        print("  mode: arm-all (every precondition satisfied simultaneously)\n")
+        records = _v.validate_all(ctx, scns, args.marker, settle=args.settle)
+        for rec in records:
+            print(f"  {rec['id']:<6} Q1:{rec['q1']['result']:<15} Q2:{rec['q2']['result']:<14} {rec['vector'][:48]}")
+    else:
+        records = []
+        for s in scns:
+            rec = _v.validate_scenario(ctx, s, args.marker, settle=args.settle)
+            records.append(rec)
+            q1 = rec["q1"]["result"]; q2 = rec["q2"]["result"]
+            print(f"  {s.id:<6} Q1:{q1:<15} Q2:{q2:<14} {s.vector[:48]}")
     when = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     if args.json:
         print("\n" + json.dumps({"marker": args.marker, "summary": _v.summarize(records),
@@ -212,6 +218,7 @@ def build_parser():
     pv.add_argument("--marker", metavar="TOKEN", help="run sentinel (required; validate arms + exploits)")
     pv.add_argument("--report", metavar="PATH", help="write the markdown report to PATH (else stdout)")
     pv.add_argument("--settle", type=int, default=4, help="seconds to wait after arming before detecting (default 4)")
+    pv.add_argument("--arm-all", action="store_true", help="arm every precondition at once (one detect pass + teardown), instead of per-scenario arm/cleanup")
     pv.add_argument("--dry-run", action="store_true", help="print commands, do not execute")
     pv.add_argument("--verbose", action="store_true", help="echo each command")
     pv.set_defaults(func=cmd_validate)

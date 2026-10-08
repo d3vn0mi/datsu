@@ -72,6 +72,80 @@ def run(ctx: Context, scenarios, marker: str) -> list:
     return [validate_scenario(ctx, s, marker) for s in scenarios]
 
 
+# --- arm-all: satisfy EVERY armable precondition at once, then detect + exploit --------------
+# Control-plane + host-state conditions that can't be armed by a per-scenario container/kubectl
+# object — they are set up once here (one k3s restart) so their detectors have something to find.
+_CP_SETUP = (
+    "mkdir -p /etc/rancher/k3s/config.yaml.d && "
+    "printf 'kubelet-arg:\\n  - \"anonymous-auth=true\"\\n  - \"authorization-mode=AlwaysAllow\"\\n"
+    "  - \"read-only-port=10255\"\\nkube-apiserver-arg:\\n  - \"anonymous-auth=true\"\\n' "
+    "> /etc/rancher/k3s/config.yaml.d/datsu-cp.yaml; "
+    "chmod 644 /etc/rancher/k3s/k3s.yaml 2>/dev/null; "
+    "mkdir -p /etc/kubernetes/manifests && chmod 777 /etc/kubernetes/manifests 2>/dev/null; "
+    "install -m 0644 /dev/null /etc/kubernetes/admin.conf 2>/dev/null; "       # K8-35 perm-detector target
+    "mkdir -p /etc/kubernetes/pki && install -m 0644 /dev/null /etc/kubernetes/pki/ca.key 2>/dev/null; "
+    "systemctl restart k3s 2>/dev/null; "
+    "for i in $(seq 1 60); do kubectl get --raw=/readyz >/dev/null 2>&1 && break; sleep 3; done"
+)
+_CP_TEARDOWN = (
+    "rm -f /etc/rancher/k3s/config.yaml.d/datsu-cp.yaml; chmod 600 /etc/rancher/k3s/k3s.yaml 2>/dev/null; "
+    "rm -rf /etc/kubernetes 2>/dev/null; "
+    "docker rm -f $(docker ps -aq --filter name=datsu-arm) 2>/dev/null; "
+    "systemctl restart k3s 2>/dev/null"
+)
+# scenarios satisfied by _CP_SETUP rather than their own arm_sh
+_CP_SATISFIED = {"K8-06", "K8-12", "K8-30", "K8-32", "K8-11", "K8-33", "K8-35"}
+
+
+def validate_all(ctx: Context, scenarios, marker: str, settle: int = 8) -> list:
+    """Arm EVERY armable precondition simultaneously (lab left fully armed), then one detect pass
+    + exploit per scenario, then a single teardown. Avoids the per-scenario namespace churn."""
+    ctx.sh(_CP_SETUP, timeout=400)
+    for s in scenarios:                       # arm all config conditions, no per-scenario cleanup
+        if s.arm_sh:
+            ctx.sh(s.arm_sh, timeout=ctx.exploit_timeout)
+    ctx.sh(f"sleep {settle}")
+
+    records = []
+    for s in scenarios:
+        marker_full = f"ESCAPE_{s.id}_{marker}"
+        rec = {"id": s.id, "class": s.kind.value, "severity": s.severity, "repro": s.repro.value,
+               "confidence": s.confidence.value, "vector": s.vector, "triage_ref": s.triage_ref,
+               "preconditions": s.preconditions or s.note or s.vector,
+               "cves": re.findall(r"CVE-\d{4}-\d+", s.note or ""),
+               "arm_steps": s.arm_sh or ("(control-plane / host-state — armed by the lab setup)"
+                                         if s.id in _CP_SATISFIED else None),
+               "exploit_cmd": f"datsu exploit --id {s.id} --marker <token>"}
+        armed = bool(s.arm_sh) or s.id in _CP_SATISFIED
+        try:
+            d = s.detect(ctx)
+            rec["q1"] = {"armed": armed,
+                         "result": ("DETECTED" if d.present else
+                                    ("INCONCLUSIVE" if d.present is None else
+                                     ("MISSED" if armed else "AMBIENT-ABSENT"))),
+                         "evidence": _first_line(d.evidence)}
+        except Exception as e:
+            rec["q1"] = {"armed": armed, "result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
+        try:
+            ex = s.exploit(ctx, marker_full)
+            if s.repro is Repro.VERSION or s.repro is Repro.NA or s.confidence is Confidence.PRECONDITION:
+                rec["q2"] = {"result": "N/A-BY-DESIGN", "evidence": _first_line(ex.evidence)}
+            else:
+                rec["q2"] = {"result": ("EXPLOITED" if ex.success else
+                                        ("INCONCLUSIVE" if ex.success is None else "FAILED")),
+                             "evidence": _first_line(ex.evidence)}
+        except Exception as e:
+            rec["q2"] = {"result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
+        records.append(rec)
+
+    for s in scenarios:                       # single teardown pass
+        if s.cleanup_sh:
+            try: ctx.sh(s.cleanup_sh, timeout=ctx.exploit_timeout)
+            except Exception: pass
+    ctx.sh(_CP_TEARDOWN, timeout=400)
+    return records
+
+
 # ---------------------------------------------------------------------------- report
 
 _Q1_OK = {"DETECTED", "AMBIENT-PRESENT"}
