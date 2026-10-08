@@ -42,7 +42,7 @@ class Context:
             full_env.update(env)
         try:
             p = subprocess.run(["/bin/sh", "-c", snippet], capture_output=True, text=True,
-                               env=full_env, timeout=timeout or self.timeout)
+                               errors="replace", env=full_env, timeout=timeout or self.timeout)
             return p.returncode, (p.stdout or "") + (p.stderr or "")
         except subprocess.TimeoutExpired as e:
             return 124, f"[timeout after {e.timeout}s] " + (e.stdout or "") + (e.stderr or "")

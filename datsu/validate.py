@@ -34,31 +34,37 @@ def validate_scenario(ctx: Context, s, marker: str, settle: int = 4) -> dict:
            "cves": re.findall(r"CVE-\d{4}-\d+", s.note or ""),
            "arm_steps": s.arm_sh, "exploit_cmd": f"datsu exploit --id {s.id} --marker <token>"}
 
-    # ---- Q1: detection ----
-    if s.arm_sh:
-        ctx.sh(s.arm_sh, timeout=ctx.exploit_timeout)
-        ctx.sh(f"sleep {settle}")
-        d = s.detect(ctx)
-        rec["q1"] = {"armed": True,
-                     "result": "DETECTED" if d.present else ("INCONCLUSIVE" if d.present is None else "MISSED"),
-                     "evidence": _first_line(d.evidence)}
-        if s.cleanup_sh:
-            ctx.sh(s.cleanup_sh, timeout=ctx.exploit_timeout)
-    else:
-        d = s.detect(ctx)
-        rec["q1"] = {"armed": False,
-                     "result": ("AMBIENT-PRESENT" if d.present else
-                                ("INCONCLUSIVE" if d.present is None else "AMBIENT-ABSENT")),
-                     "evidence": _first_line(d.evidence)}
+    # ---- Q1: detection ---- (guarded: one bad scenario must not abort the whole run)
+    try:
+        if s.arm_sh:
+            ctx.sh(s.arm_sh, timeout=ctx.exploit_timeout)
+            ctx.sh(f"sleep {settle}")
+            d = s.detect(ctx)
+            rec["q1"] = {"armed": True,
+                         "result": "DETECTED" if d.present else ("INCONCLUSIVE" if d.present is None else "MISSED"),
+                         "evidence": _first_line(d.evidence)}
+            if s.cleanup_sh:
+                ctx.sh(s.cleanup_sh, timeout=ctx.exploit_timeout)
+        else:
+            d = s.detect(ctx)
+            rec["q1"] = {"armed": False,
+                         "result": ("AMBIENT-PRESENT" if d.present else
+                                    ("INCONCLUSIVE" if d.present is None else "AMBIENT-ABSENT")),
+                         "evidence": _first_line(d.evidence)}
+    except Exception as e:
+        rec["q1"] = {"armed": bool(s.arm_sh), "result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
 
     # ---- Q2: exploitation (self-arming, marker-stamped) ----
-    ex = s.exploit(ctx, marker_full)
-    if s.repro is Repro.VERSION or s.repro is Repro.NA or s.confidence is Confidence.PRECONDITION:
-        rec["q2"] = {"result": "N/A-BY-DESIGN", "evidence": _first_line(ex.evidence)}
-    else:
-        rec["q2"] = {"result": ("EXPLOITED" if ex.success else
-                                ("INCONCLUSIVE" if ex.success is None else "FAILED")),
-                     "evidence": _first_line(ex.evidence)}
+    try:
+        ex = s.exploit(ctx, marker_full)
+        if s.repro is Repro.VERSION or s.repro is Repro.NA or s.confidence is Confidence.PRECONDITION:
+            rec["q2"] = {"result": "N/A-BY-DESIGN", "evidence": _first_line(ex.evidence)}
+        else:
+            rec["q2"] = {"result": ("EXPLOITED" if ex.success else
+                                    ("INCONCLUSIVE" if ex.success is None else "FAILED")),
+                         "evidence": _first_line(ex.evidence)}
+    except Exception as e:
+        rec["q2"] = {"result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
     return rec
 
 
@@ -87,9 +93,10 @@ def summarize(records: list) -> dict:
 def report_md(records: list, marker: str, when: str = "") -> str:
     s = summarize(records)
     g1 = {"DETECTED": "✅ detected", "MISSED": "❌ MISSED", "INCONCLUSIVE": "⚠️ inconclusive",
-          "AMBIENT-PRESENT": "✅ present (ambient)", "AMBIENT-ABSENT": "— absent (arm to test)"}
+          "AMBIENT-PRESENT": "✅ present (ambient)", "AMBIENT-ABSENT": "— absent (arm to test)",
+          "ERROR": "⚠️ error"}
     g2 = {"EXPLOITED": "✅ exploited", "FAILED": "❌ FAILED", "INCONCLUSIVE": "⚠️ inconclusive",
-          "N/A-BY-DESIGN": "— N/A by design"}
+          "N/A-BY-DESIGN": "— N/A by design", "ERROR": "⚠️ error"}
     out = []
     out.append("# datsu validation report")
     out.append("")
