@@ -94,12 +94,14 @@ class Scenario:
 
     # ---- exploitation (state-changing; gated by the CLI) ------------------------------
     def exploit(self, ctx: "Context", marker: str) -> Exploitation:
-        if self.repro is Repro.VERSION:
-            return Exploitation(False, None,
-                                "version/CVE precondition — detection only (cyber_gate: no live "
-                                "exploitation of a version-pinned component)")
         if self.repro is Repro.NA:
             return Exploitation(False, None, "not applicable on this platform")
+        if self.repro is Repro.VERSION and not (self.exploit_sh or self.exploit_fn):
+            # no replication PoC wired yet — detect-only. (With a PoC, we fall through and run the
+            # DOCUMENTED public exploit; it only succeeds on a vulnerable build, so it confirms the
+            # finding when the vulnerable version is present and no-ops on a patched host.)
+            return Exploitation(False, None,
+                                "version/CVE precondition — no replication PoC wired (detect-only)")
         if self.confidence is Confidence.PRECONDITION:
             return Exploitation(False, None,
                                 "not auto-exploited — " + (self.note or "documented technique is "

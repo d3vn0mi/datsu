@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datsu"
-version = "0.6.0"
+version = "0.7.0"
 description = "Detect (read-only) and, when authorized, exploit Docker & Kubernetes container-escape conditions on a node."
 readme = "README.md"
 requires-python = ">=3.9"

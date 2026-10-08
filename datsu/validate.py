@@ -55,17 +55,26 @@ def validate_scenario(ctx: Context, s, marker: str, settle: int = 4) -> dict:
         rec["q1"] = {"armed": bool(s.arm_sh), "result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
 
     # ---- Q2: exploitation (self-arming, marker-stamped) ----
-    try:
-        ex = s.exploit(ctx, marker_full)
-        if s.repro is Repro.VERSION or s.repro is Repro.NA or s.confidence is Confidence.PRECONDITION:
-            rec["q2"] = {"result": "N/A-BY-DESIGN", "evidence": _first_line(ex.evidence)}
-        else:
-            rec["q2"] = {"result": ("EXPLOITED" if ex.success else
-                                    ("INCONCLUSIVE" if ex.success is None else "FAILED")),
-                         "evidence": _first_line(ex.evidence)}
-    except Exception as e:
-        rec["q2"] = {"result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
+    rec["q2"] = _run_q2(ctx, s, marker_full, rec["q1"]["result"])
     return rec
+
+
+def _run_q2(ctx, s, marker_full, q1_result):
+    """Decide + run Q2. Version-CVE scenarios run their documented PoC ONLY when the vulnerable
+    build was detected (else N/A — not vulnerable); PoC-less version / n-a / precondition stay N/A."""
+    q1_present = q1_result in ("DETECTED", "AMBIENT-PRESENT")
+    ver_poc = s.repro is Repro.VERSION and (s.exploit_sh or s.exploit_fn)
+    try:
+        if s.repro is Repro.NA or s.confidence is Confidence.PRECONDITION or (s.repro is Repro.VERSION and not ver_poc):
+            return {"result": "N/A-BY-DESIGN", "evidence": _first_line(s.exploit(ctx, marker_full).evidence)}
+        if s.repro is Repro.VERSION and not q1_present:
+            return {"result": "N/A-BY-DESIGN", "evidence": "not vulnerable (patched build) — documented PoC not run"}
+        ex = s.exploit(ctx, marker_full)
+        return {"result": ("EXPLOITED" if ex.success else
+                           ("INCONCLUSIVE" if ex.success is None else "FAILED")),
+                "evidence": _first_line(ex.evidence)}
+    except Exception as e:
+        return {"result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
 
 
 def run(ctx: Context, scenarios, marker: str) -> list:
@@ -129,16 +138,7 @@ def validate_all(ctx: Context, scenarios, marker: str, settle: int = 8) -> list:
                          "evidence": _first_line(d.evidence)}
         except Exception as e:
             rec["q1"] = {"armed": armed, "result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
-        try:
-            ex = s.exploit(ctx, marker_full)
-            if s.repro is Repro.VERSION or s.repro is Repro.NA or s.confidence is Confidence.PRECONDITION:
-                rec["q2"] = {"result": "N/A-BY-DESIGN", "evidence": _first_line(ex.evidence)}
-            else:
-                rec["q2"] = {"result": ("EXPLOITED" if ex.success else
-                                        ("INCONCLUSIVE" if ex.success is None else "FAILED")),
-                             "evidence": _first_line(ex.evidence)}
-        except Exception as e:
-            rec["q2"] = {"result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
+        rec["q2"] = _run_q2(ctx, s, marker_full, rec["q1"]["result"])
         records.append(rec)
 
     for s in scenarios:                       # single teardown pass
