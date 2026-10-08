@@ -16,7 +16,9 @@ import shutil
 import subprocess
 from typing import Optional
 
-from .model import Detection
+import re as _re
+
+from .model import Detection, Exploitation
 
 
 class Context:
@@ -142,4 +144,40 @@ def rbac_detector(verb: str, resource: str, label: str):
         if subs:
             return Detection(True, f"{label}: " + ", ".join(subs))
         return Detection(False, f"no non-system ServiceAccount can {verb} {resource}")
+    return _fn
+
+
+def rbac_exploit(verb: str, resource: str, action: str, success_pat: str = None,
+                 expect_marker: bool = False, setup: str = "", teardown: str = ""):
+    """Build an exploit_fn that mints the token of the bound non-system SA (the armed grant) and
+    performs the privileged action AS that SA — a bounded, documented technique, not a novel one.
+
+    `action` runs under /bin/sh with $TOK (the SA's bearer token), $SANS/$SANAME (its namespace/name)
+    and $MARKER in env; it should drive `kubectl --token=$TOK …`. Success is: $MARKER present in the
+    output (`expect_marker`), else `success_pat` matches, else exit 0. On a host with no bound SA the
+    exploit reports not-attempted (nothing armed), which is the correct 'absent' answer."""
+    def _fn(ctx: Context, marker: str) -> Exploitation:
+        if not ctx.have("kubectl"):
+            return Exploitation(False, None, "kubectl not available")
+        subs = ctx.rbac_subjects_with(verb, resource)
+        if not subs:
+            return Exploitation(False, None, f"no non-system SA bound to {verb} {resource} (nothing armed)")
+        ns, sa = subs[0].split(":", 1)
+        rc, tok = ctx.sh(f"kubectl -n {ns} create token {sa} --duration=10m 2>/dev/null")
+        tok = tok.strip()
+        if rc != 0 or not tok:
+            return Exploitation(True, False, f"could not mint a token for {ns}:{sa}")
+        env = {"MARKER": marker, "TOK": tok, "SANS": ns, "SANAME": sa}
+        if setup:
+            ctx.sh(setup, env=env, timeout=ctx.exploit_timeout)
+        rc, out = ctx.sh(action, env=env, timeout=ctx.exploit_timeout)
+        if teardown:
+            ctx.sh(teardown, env=env, timeout=ctx.exploit_timeout)
+        if expect_marker:
+            ok = marker in out
+        elif success_pat:
+            ok = bool(_re.search(success_pat, out))
+        else:
+            ok = rc == 0
+        return Exploitation(True, ok, f"as {ns}:{sa} — {out.strip()[:180]}")
     return _fn

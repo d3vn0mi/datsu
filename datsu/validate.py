@@ -85,16 +85,19 @@ _CP_SETUP = (
     "install -m 0644 /dev/null /etc/kubernetes/admin.conf 2>/dev/null; "       # K8-35 perm-detector target
     "mkdir -p /etc/kubernetes/pki && install -m 0644 /dev/null /etc/kubernetes/pki/ca.key 2>/dev/null; "
     "systemctl restart k3s 2>/dev/null; "
-    "for i in $(seq 1 60); do kubectl get --raw=/readyz >/dev/null 2>&1 && break; sleep 3; done"
+    "for i in $(seq 1 60); do kubectl get --raw=/readyz >/dev/null 2>&1 && break; sleep 3; done; "
+    "kubectl create deployment tiller-deploy -n kube-system --image=alpine -- sleep 3600 >/dev/null 2>&1; "   # K8-54 (legacy Helm v2 Tiller object)
+    "kubectl -n kube-system expose deployment tiller-deploy --port=44134 >/dev/null 2>&1"
 )
 _CP_TEARDOWN = (
     "rm -f /etc/rancher/k3s/config.yaml.d/datsu-cp.yaml; chmod 600 /etc/rancher/k3s/k3s.yaml 2>/dev/null; "
     "rm -rf /etc/kubernetes 2>/dev/null; "
+    "kubectl -n kube-system delete deploy,svc tiller-deploy --wait=false >/dev/null 2>&1; "
     "docker rm -f $(docker ps -aq --filter name=datsu-arm) 2>/dev/null; "
     "systemctl restart k3s 2>/dev/null"
 )
 # scenarios satisfied by _CP_SETUP rather than their own arm_sh
-_CP_SATISFIED = {"K8-06", "K8-12", "K8-30", "K8-32", "K8-11", "K8-33", "K8-35"}
+_CP_SATISFIED = {"K8-06", "K8-12", "K8-30", "K8-32", "K8-11", "K8-33", "K8-35", "K8-54"}
 
 
 def validate_all(ctx: Context, scenarios, marker: str, settle: int = 8) -> list:
