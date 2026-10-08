@@ -63,7 +63,8 @@ def main():
     }
     print(f"create template {TID} (cloud-image import, server-side) …")
     wait_task(req("POST", f"/nodes/{NODE}/qemu", cfg), "create")
-    req("PUT", f"/nodes/{NODE}/qemu/{TID}/resize", {"disk": "scsi0", "size": "+18G"})
+    # no resize here — keep the template at the image's native size; the Pulumi clone grows the disk
+    # (a clone can only grow, not shrink, so the template must stay small).
     print("convert to template …")
     req("POST", f"/nodes/{NODE}/qemu/{TID}/template", {})
     print(f"template {TID} ready — Pulumi can now clone it (API-only).")

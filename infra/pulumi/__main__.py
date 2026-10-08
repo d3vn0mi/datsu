@@ -28,6 +28,13 @@ lab = vm.VirtualMachine("datsu-lab",
     clone={"vm_id": template_id, "full": True},
     agent={"enabled": False},   # datsu drives over SSH; cloud image has no qemu-guest-agent (enabling
                                 # would block `pulumi up`). Research-engine use: install it via cloud-init + flip True.
+    # a clone resets these to provider defaults (512M / qemu64 / ostype other), so set them explicitly:
+    cpu={"cores": 4, "type": "host"},
+    memory={"dedicated": 6144},
+    operating_system={"type": "l26"},
+    scsi_hardware="virtio-scsi-single",
+    cdrom={"file_id": "none"},  # empty cdrom drive (not a physical host_cdrom, which has no media -> QEMU exit 1)
+    disks=[{"interface": "scsi0", "datastore_id": "local", "size": 20}],  # grow the cloned disk to 20G
     network_devices=[{"bridge": "vmbr1", "model": "virtio"}],
     initialization={
         "datastore_id": "local",
