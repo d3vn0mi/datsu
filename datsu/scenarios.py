@@ -669,6 +669,10 @@ SCENARIOS: list[Scenario] = [
 
 BY_ID = {s.id: s for s in SCENARIOS}
 
+# stamp validation metadata (preconditions / arm / cleanup) onto the registry
+from . import arming as _arming  # noqa: E402  (deferred to avoid any import cycle)
+_arming.apply(SCENARIOS)
+
 
 def get(scenario_id: str):
     return BY_ID.get(scenario_id.upper())

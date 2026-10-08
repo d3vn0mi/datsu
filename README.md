@@ -82,6 +82,23 @@ detection and only attempts conditions that are actually **present** and **explo
   1 proven, 1 failed, 1 skipped/inconclusive
 ```
 
+### Validate — self-test the tool on a disposable lab (the experiment)
+
+Answers two questions per scenario and writes an engagement-style report (preconditions +
+reproducible steps + results). **Destructive — arms real escape conditions; disposable isolated lab only.**
+
+```bash
+datsu validate --marker RS_$(date +%s) --report report.md     # all armable scenarios
+datsu validate --class k8s --marker RS1 --report k8s.md        # Kubernetes only
+datsu validate --only DK-01 K8-15 --marker RS1                 # a subset, report to stdout
+```
+
+Per scenario it arms the precondition, runs `datsu detect` (**Q1 — does it find the precondition?**),
+tears it down, then runs `datsu exploit` (**Q2 — does it exploit?**). Version/CVE and host-state
+conditions that can't be armed on demand are reported against the node's ambient state with
+`exploit N/A by design`. The report has, for every vulnerability, its **preconditions**, the Q1/Q2
+results, and the **reproduce** steps (arm command + `datsu exploit` line).
+
 ## How it works
 
 Every scenario carries two halves:

@@ -75,6 +75,11 @@ class Scenario:
     detect_fn: Optional[Callable[["Context"], Detection]] = None
     exploit_sh: Optional[str] = None  # sh -c snippet; $MARKER in env; exit 0 == escape proven
     exploit_fn: Optional[Callable[["Context", str], Exploitation]] = None
+    # validation metadata (used by `datsu validate`): the human-readable preconditions this
+    # condition requires, and how to ARM it on a disposable lab so the detector can be exercised.
+    preconditions: str = ""
+    arm_sh: Optional[str] = None      # create the condition and LEAVE it armed (disposable lab only)
+    cleanup_sh: Optional[str] = None  # tear the armed condition back down
 
     # ---- detection (always read-only) -------------------------------------------------
     def detect(self, ctx: "Context") -> Detection:

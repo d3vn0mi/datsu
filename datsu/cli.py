@@ -135,6 +135,47 @@ def cmd_exploit(args):
     return 1 if failed else 0
 
 
+def cmd_validate(args):
+    if not args.marker:
+        sys.stderr.write(BANNER + "\nRefusing to validate without --marker <token>.\n"
+                         "`validate` ARMS real escape conditions and runs exploits — disposable, isolated lab ONLY.\n")
+        return 2
+    from . import validate as _v
+    import datetime
+    ctx = Context(dry_run=args.dry_run, verbose=args.verbose)
+    if getattr(args, "settle", None):
+        pass
+    scns = _select(args)
+    print(BANNER)
+    print("  ⚠  ARMING real escape conditions + running exploits. Disposable isolated lab ONLY.")
+    print(f"  run marker: {args.marker}  ·  scenarios: {len(scns)}\n")
+    records = []
+    for s in scns:
+        rec = _v.validate_scenario(ctx, s, args.marker, settle=args.settle)
+        records.append(rec)
+        q1 = rec["q1"]["result"]; q2 = rec["q2"]["result"]
+        print(f"  {s.id:<6} Q1:{q1:<15} Q2:{q2:<14} {s.vector[:48]}")
+    when = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    if args.json:
+        print("\n" + json.dumps({"marker": args.marker, "summary": _v.summarize(records),
+                                 "records": records}, indent=2))
+    md = _v.report_md(records, args.marker, when)
+    if args.report:
+        try:
+            with open(args.report, "w") as f:
+                f.write(md)
+            print(f"\n  report written: {args.report}")
+        except OSError as e:
+            sys.stderr.write(f"could not write report: {e}\n")
+            print("\n" + md)
+    else:
+        print("\n" + md)
+    su = _v.summarize(records)
+    print(f"\n  Q1 {su['detected']} detected / {su['missed']} missed · "
+          f"Q2 {su['exploited']} exploited / {su['exploit_failed']} failed / {su['exploit_na']} n-a")
+    return 1 if (su["missed"] or su["exploit_failed"]) else 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="datsu",
         description="Detect (read-only) and, when authorized, exploit container & Kubernetes escape conditions.")
@@ -165,6 +206,15 @@ def build_parser():
     px.add_argument("--dry-run", action="store_true", help="print commands, do not execute")
     px.add_argument("--verbose", action="store_true", help="echo each command")
     px.set_defaults(func=cmd_exploit)
+
+    pv = sub.add_parser("validate", help="gated: arm each condition on a disposable lab, run detect + exploit, write a report")
+    common(pv)
+    pv.add_argument("--marker", metavar="TOKEN", help="run sentinel (required; validate arms + exploits)")
+    pv.add_argument("--report", metavar="PATH", help="write the markdown report to PATH (else stdout)")
+    pv.add_argument("--settle", type=int, default=4, help="seconds to wait after arming before detecting (default 4)")
+    pv.add_argument("--dry-run", action="store_true", help="print commands, do not execute")
+    pv.add_argument("--verbose", action="store_true", help="echo each command")
+    pv.set_defaults(func=cmd_validate)
     return p
 
 

@@ -86,3 +86,37 @@ def test_list_json_is_valid_and_complete(capsys):
 def test_get_is_case_insensitive():
     assert get("dk-01") is get("DK-01") is not None
     assert get("nope") is None
+
+
+# --- validate harness + arming metadata ---
+
+def test_every_scenario_has_preconditions():
+    for s in SCENARIOS:
+        assert s.preconditions, f"{s.id} has no preconditions text"
+
+
+def test_armable_scenarios_have_cleanup():
+    # anything we arm, we must be able to tear down
+    for s in SCENARIOS:
+        if s.arm_sh:
+            assert s.cleanup_sh, f"{s.id} arms but has no cleanup_sh"
+
+
+def test_validate_refuses_without_marker(capsys):
+    assert main(["validate", "--only", "DK-01"]) == 2
+    assert "without --marker" in capsys.readouterr().err
+
+
+def test_validate_dry_run_builds_report(capsys):
+    rc = main(["validate", "--marker", "t", "--only", "DK-01", "DK-03", "--dry-run"])
+    assert rc in (0, 1)
+    out = capsys.readouterr().out
+    assert "datsu validation report" in out
+    assert "Q1" in out and "Q2" in out and "Preconditions" in out
+
+
+def test_report_md_contains_reproduce_and_results():
+    from datsu import validate as v
+    recs = [v.validate_scenario(_StubCtx(rc=0, out="x"), get("DK-01"), "M", settle=0)]
+    md = v.report_md(recs, "M")
+    assert "## Per-scenario detail" in md and "Reproduce" in md and "datsu exploit --id DK-01" in md
