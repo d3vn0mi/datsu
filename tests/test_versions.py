@@ -50,3 +50,57 @@ def fake_runc(tmp_path, monkeypatch):
 def test_runc_detectors(fake_runc, version, sid, present):
     fake_runc(version)
     assert get(sid).detect(Context()).present is present
+
+
+# --- S3.T2: advisory floors (sources cited in each scenario note) ---------------------------
+
+@pytest.mark.parametrize("version,present", [
+    ("1.2.7", True), ("1.2.8", False),
+    ("1.3.2", True), ("1.3.3", False),          # 1.3.x was missed by the old single <1.2.8 floor
+    ("1.4.0-rc.2", True), ("1.4.0-rc.3", False), ("1.4.0", False),
+    ("1.1.15", True),
+])
+def test_dk17_runc_2025_branches(fake_runc, version, present):
+    fake_runc(version)
+    assert get("DK-17").detect(Context()).present is present
+
+
+@pytest.fixture
+def fake_uname(tmp_path, monkeypatch):
+    def make(release):
+        p = tmp_path / "uname"
+        p.write_text(f"#!/bin/sh\necho '{release}'\n")
+        p.chmod(p.stat().st_mode | stat.S_IEXEC)
+        monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    return make
+
+
+@pytest.mark.parametrize("release,present", [
+    ("6.12.110", True), ("6.12.111", False),
+    ("6.6.157", True), ("6.6.158", False),
+    ("6.6.92", False),                            # before the bug was backported to 6.6
+    ("6.9.12", False),                            # mainline before 6.10 unaffected
+    ("6.15.3", True),                             # branch with no listed fix: affected
+    ("7.2.0", False),
+])
+def test_dk18_cve_2026_80521_upstream(fake_uname, release, present):
+    fake_uname(release)
+    assert get("DK-18").detect(Context()).present is present
+
+
+@pytest.mark.parametrize("release,present", [
+    ("6.1.172", True), ("6.1.173", False),
+    ("4.9.0", False), ("4.9.1", True),            # backported into 4.9.1
+    ("5.10.255", True), ("5.10.256", False),
+    ("7.1.0", False),
+])
+def test_k818_cve_2026_46333_upstream(fake_uname, release, present):
+    fake_uname(release)
+    assert get("K8-18").detect(Context()).present is present
+
+
+@pytest.mark.parametrize("sid", ["DK-18", "K8-18"])
+def test_distro_kernel_is_inconclusive(fake_uname, sid):
+    fake_uname("6.8.0-139-generic")     # vendor backports: upstream table cannot decide
+    d = get(sid).detect(Context())
+    assert d.present is None and "vendor" in d.evidence

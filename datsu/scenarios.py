@@ -75,6 +75,58 @@ def _version_lt(label: str, probe: str, pattern: str, fixed: str, tool: str = No
         return Detection(_ver_key(m.group(1)) < _ver_key(fixed), f"{label}: {m.group(1)} (fixed >= {fixed})")
     return _fn
 
+def _runc_branches(fixes: dict):
+    """runc detector for advisories fixed per release branch. `fixes` maps (major, minor) to the
+    fixed version on that branch; branches older than every listed one are affected, newer are not."""
+    keys = sorted(fixes)
+    def _fn(ctx: Context) -> Detection:
+        if not ctx.have("runc"):
+            return Detection(None, "runc binary not found on PATH")
+        _rc, out = ctx.sh("runc --version")
+        m = re.search(r"runc version ([0-9][0-9.]*(?:-rc\.?[0-9]+)?)", out)
+        if not m:
+            return Detection(None, out.strip()[:120] or "could not parse runc --version")
+        cur = _ver_key(m.group(1))
+        br = cur[:2]
+        if br in fixes:
+            hit = cur < _ver_key(fixes[br])
+        else:
+            hit = br < keys[0]
+        fixed = ", ".join(fixes[k] for k in keys)
+        return Detection(hit, f"runc {m.group(1)} (fixed in {fixed})")
+    return _fn
+
+def _kernel_cna(cve: str, introduced: tuple, fixes: dict, mainline_fix: tuple, backports=()):
+    """Kernel detector driven by the kernel.org CNA record's per-branch table.
+
+    introduced: (major, minor) of the first affected mainline release; backports: [(lo, hi)]
+    patch-level ranges where a stable branch older than `introduced` received the bug;
+    fixes: (major, minor) -> first fixed (major, minor, patch) on that stable branch;
+    mainline_fix: first fixed mainline release. A distro kernel (any suffix after X.Y.Z, e.g.
+    '6.8.0-139-generic') may carry vendor backports of the bug or the fix, so it is reported
+    inconclusive with the upstream verdict in the evidence."""
+    def _fn(ctx: Context) -> Detection:
+        _rc, out = ctx.sh("uname -r")
+        rel = out.strip().splitlines()[0] if out.strip() else ""
+        m = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?(.*)$", rel)
+        if not m:
+            return Detection(None, f"could not parse kernel release {rel!r}")
+        key = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+        if any(lo <= key < hi for lo, hi in backports):
+            hit = True
+        elif key[:2] < introduced:
+            hit = False
+        elif key[:2] in fixes:
+            hit = key < fixes[key[:2]]
+        else:
+            hit = key < mainline_fix
+        verdict = "affected" if hit else "not affected / fixed"
+        if m.group(4).strip() not in ("", "+"):
+            return Detection(None, f"kernel {rel}: upstream {verdict} for {cve} per the kernel CNA branch table; "
+                                   "distro kernel — check the vendor advisory (backports)")
+        return Detection(hit, f"kernel {rel}: {verdict} for {cve} (kernel CNA branch table)")
+    return _fn
+
 def _kernel_lt(label: str, fixed: str):
     return _version_lt(label, "uname -r", r"^([0-9]+\.[0-9]+(?:\.[0-9]+)?)", fixed)
 
@@ -243,11 +295,20 @@ SCENARIOS: list[Scenario] = [
         note="CVE-2024-21626 — fixed in runc 1.1.12."),
 
     Scenario("DK-17", Kind.DOCKER, Repro.VERSION, "runc 2025 maskedPaths/procfs race family",
-        "HIGH", triage_ref="A3", detect_fn=_runc_below("1.2.8"),
-        note="2025 maskedPaths/procfs race family — fixed in runc 1.2.8."),
+        "HIGH", triage_ref="A3",
+        detect_fn=_runc_branches({(1, 2): "1.2.8", (1, 3): "1.3.3", (1, 4): "1.4.0-rc.3"}),
+        note="CVE-2025-31133 / CVE-2025-52565 / CVE-2025-52881 — fixed in runc 1.2.8, 1.3.3 and "
+             "1.4.0-rc.3 (GHSA-9493-h29p-rfm2)."),
 
     Scenario("DK-18", Kind.DOCKER, Repro.VERSION, "kernel LPE from an unprivileged container",
-        "HIGH", triage_ref="A1", detect_fn=_kernel_precondition("verify against the published kernel-LPE advisory floor (placeholder in the pack)")),
+        "HIGH", triage_ref="A1",
+        detect_fn=_kernel_cna("CVE-2026-80521", introduced=(6, 10),
+                              fixes={(6, 12): (6, 12, 111), (6, 18): (6, 18, 53), (7, 1): (7, 1, 10)},
+                              mainline_fix=(7, 2, 0),
+                              backports=[((6, 1, 141), (6, 1, 189)), ((6, 6, 93), (6, 6, 158))]),
+        note="CVE-2026-80521 — AF_UNIX garbage-collector use-after-free reachable from a container. "
+             "Kernel CNA record: introduced 6.10 (backported into 6.1.141 and 6.6.93); fixed in 6.1.189, "
+             "6.6.158, 6.12.111, 6.18.53, 7.1.10, mainline 7.2. Distro kernels: vendor advisory."),
 
     # --- Docker/runtime CVEs (version-pinned, detect-only) ---
     Scenario("DK-19", Kind.DOCKER, Repro.VERSION, "runc /proc/self/exe host-binary overwrite",
@@ -556,7 +617,18 @@ SCENARIOS: list[Scenario] = [
             'echo "Secret stored in cleartext in etcd (no encryption-at-rest) ($MARKER)"; exit $ok')),
 
     Scenario("K8-18", Kind.K8S, Repro.VERSION, "pidfd FD-steal (seccomp unset + namespace not Restricted)",
-        "HIGH", triage_ref="D13", detect_fn=_kernel_precondition("pidfd FD-steal (CVE-2026-46333) needs a vulnerable kernel — verify against the advisory")),
+        "HIGH", triage_ref="D13",
+        detect_fn=_kernel_cna("CVE-2026-46333", introduced=(4, 10),
+                              fixes={(5, 10): (5, 10, 256), (5, 15): (5, 15, 207), (6, 1): (6, 1, 173),
+                                     (6, 6): (6, 6, 139), (6, 12): (6, 12, 89), (6, 18): (6, 18, 31),
+                                     (7, 0): (7, 0, 8)},
+                              mainline_fix=(7, 1, 0),
+                              backports=[((3, 16, 52), (3, 17, 0)), ((4, 4, 40), (4, 5, 0)),
+                                         ((4, 8, 16), (4, 9, 0)), ((4, 9, 1), (4, 10, 0))]),
+        note="CVE-2026-46333 — ptrace/exit race; pidfd_getfd() steals a dying privileged process's fds. "
+             "Kernel CNA record: introduced 4.10 (backported into 3.16.52, 4.4.40, 4.8.16, 4.9.1); fixed in "
+             "5.10.256, 5.15.207, 6.1.173, 6.6.139, 6.12.89, 6.18.31, 7.0.8, mainline 7.1. Distro kernels: "
+             "vendor advisory."),
 
     # --- dangerous RBAC grants to a non-system ServiceAccount (read-only RBAC correlation) ---
     Scenario("K8-19", Kind.K8S, Repro.CONFIG, "SA can create pods/exec (exec into any pod)",
