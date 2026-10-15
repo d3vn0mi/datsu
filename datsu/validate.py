@@ -26,6 +26,24 @@ def _first_line(s: str) -> str:
     return (s or "").strip().splitlines()[0][:160] if (s or "").strip() else ""
 
 
+_OBJ = re.compile(r"(?:datsu-arm-|esc-x-)[a-z0-9-]+")
+
+
+def scope_of(sid: str, evidence: str, arm_sh: str) -> str:
+    """Whose object made a detector fire: this scenario's own armed object ('own'), another
+    scenario's ('other' -- a cross-hit: the condition is on the node, but this arm is unconfirmed),
+    or a node-level condition naming no armed object ('node')."""
+    ev, arm = (evidence or "").lower(), (arm_sh or "").lower()
+    objs = _OBJ.findall(ev)
+    if not objs:
+        return "node"
+    sid_l = sid.lower()
+    own = {sid_l, sid_l.replace("-", ""), sid_l.replace("k8-", "k8")}
+    if any(t in ev for t in own) or any(o in arm for o in objs):
+        return "own"
+    return "other"
+
+
 def validate_scenario(ctx: Context, s, marker: str, settle: int = 4) -> dict:
     marker_full = f"ESCAPE_{s.id}_{marker}"
     rec = {"id": s.id, "class": s.kind.value, "severity": s.severity, "repro": s.repro.value,
@@ -43,6 +61,8 @@ def validate_scenario(ctx: Context, s, marker: str, settle: int = 4) -> dict:
             rec["q1"] = {"armed": True,
                          "result": "DETECTED" if d.present else ("INCONCLUSIVE" if d.present is None else "MISSED"),
                          "evidence": _first_line(d.evidence)}
+            if d.present:
+                rec["q1"]["scope"] = scope_of(s.id, d.evidence, s.arm_sh)
             if s.cleanup_sh:
                 ctx.sh(s.cleanup_sh, timeout=ctx.exploit_timeout)
         else:
@@ -136,6 +156,8 @@ def validate_all(ctx: Context, scenarios, marker: str, settle: int = 8) -> list:
                                     ("INCONCLUSIVE" if d.present is None else
                                      ("MISSED" if armed else "AMBIENT-ABSENT"))),
                          "evidence": _first_line(d.evidence)}
+            if d.present:
+                rec["q1"]["scope"] = scope_of(s.id, d.evidence, s.arm_sh)
         except Exception as e:
             rec["q1"] = {"armed": armed, "result": "ERROR", "evidence": f"{type(e).__name__}: {e}"[:140]}
         rec["q2"] = _run_q2(ctx, s, marker_full, rec["q1"]["result"])
@@ -160,11 +182,18 @@ def summarize(records: list) -> dict:
         "total": len(records),
         "detected": sum(r["q1"]["result"] == "DETECTED" for r in records),
         "missed": sum(r["q1"]["result"] == "MISSED" for r in records),
+        "cross_hits": sum(r["q1"].get("scope") == "other" for r in records),
         "ambient_present": sum(r["q1"]["result"] == "AMBIENT-PRESENT" for r in records),
         "exploited": sum(r["q2"]["result"] == "EXPLOITED" for r in records),
         "exploit_failed": sum(r["q2"]["result"] == "FAILED" for r in records),
         "exploit_na": sum(r["q2"]["result"] == "N/A-BY-DESIGN" for r in records),
     }
+
+
+def _q1_label(r: dict, g1: dict) -> str:
+    if r["q1"].get("scope") == "other":
+        return "⚠️ detected (cross-hit)"
+    return g1.get(r["q1"]["result"], r["q1"]["result"])
 
 
 def report_md(records: list, marker: str, when: str = "") -> str:
@@ -186,7 +215,8 @@ def report_md(records: list, marker: str, when: str = "") -> str:
     out.append("")
     out.append(f"- Scenarios validated: **{s['total']}**")
     out.append(f"- Q1 detection: **{s['detected']} detected** (armed), {s['ambient_present']} present ambient, "
-               f"**{s['missed']} missed**")
+               f"**{s['missed']} missed**; {s['cross_hits']} cross-hit"
+               f"{'' if s['cross_hits'] == 1 else 's'} (detector fired on another scenario's object)")
     out.append(f"- Q2 exploitation: **{s['exploited']} exploited**, {s['exploit_failed']} failed, "
                f"{s['exploit_na']} N/A-by-design (version / precondition / n-a)")
     out.append("")
@@ -194,7 +224,7 @@ def report_md(records: list, marker: str, when: str = "") -> str:
     out.append("|----|----|----|----|----|")
     for r in records:
         out.append(f"| {r['id']} | {r['vector'][:52].replace('|','\\|')} | {r['severity']} | "
-                   f"{g1.get(r['q1']['result'], r['q1']['result'])} | {g2.get(r['q2']['result'], r['q2']['result'])} |")
+                   f"{_q1_label(r, g1)} | {g2.get(r['q2']['result'], r['q2']['result'])} |")
     out.append("")
     out.append("## Per-scenario detail")
     out.append("")
@@ -206,7 +236,7 @@ def report_md(records: list, marker: str, when: str = "") -> str:
                    + (f" · triage {r['triage_ref']}" if r['triage_ref'] else "") + cves + "*")
         out.append("")
         out.append(f"- **Preconditions:** {r['preconditions']}")
-        out.append(f"- **Q1 — detect precondition:** {g1.get(r['q1']['result'], r['q1']['result'])}"
+        out.append(f"- **Q1 — detect precondition:** {_q1_label(r, g1)}"
                    + (f" — `{r['q1']['evidence']}`" if r['q1']['evidence'] else ""))
         out.append(f"- **Q2 — exploit:** {g2.get(r['q2']['result'], r['q2']['result'])}"
                    + (f" — `{r['q2']['evidence']}`" if r['q2']['evidence'] else ""))
