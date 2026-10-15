@@ -29,18 +29,30 @@ def _pods_any(jq_select: str) -> str:
 
 _CAP = 'select((.HostConfig.CapAdd//[]) | map(ltrimstr("CAP_")) | index("{}"))'
 
-def _ver_tuple(s: str):
-    return tuple(int(x) for x in re.findall(r"\d+", s)[:3])
+_VER = re.compile(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-rc\.?(\d+))?")
+
+def _ver_key(s: str):
+    """Sortable key for a version string: (major, minor, patch, is_final, rc).
+
+    A `-rcN` pre-release sorts before its final release and rc numbers compare numerically
+    (1.0.0-rc6 < 1.0.0-rc95 < 1.0.0). Any other suffix (kernel '-139-generic', '+dev') is ignored."""
+    m = _VER.search(s or "")
+    if not m:
+        return ()
+    maj, mi, pa, rc = m.groups()
+    return (int(maj), int(mi or 0), int(pa or 0), 0 if rc else 1, int(rc or 0))
+
+_ver_tuple = _ver_key   # backwards-compatible name
 
 def _runc_below(fixed: str):
     def _fn(ctx: Context) -> Detection:
         if not ctx.have("runc"):
             return Detection(None, "runc binary not found on PATH")
         _rc, out = ctx.sh("runc --version")
-        m = re.search(r"runc version ([0-9][0-9.]*)", out)
+        m = re.search(r"runc version ([0-9][0-9.]*(?:-rc\.?[0-9]+)?)", out)
         if not m:
             return Detection(None, out.strip()[:120] or "could not parse runc --version")
-        cur, fix = _ver_tuple(m.group(1)), _ver_tuple(fixed)
+        cur, fix = _ver_key(m.group(1)), _ver_key(fixed)
         return Detection(cur < fix, f"runc {m.group(1)} (fixed in >= {fixed})")
     return _fn
 
@@ -60,7 +72,7 @@ def _version_lt(label: str, probe: str, pattern: str, fixed: str, tool: str = No
         m = re.search(pattern, out)
         if not m:
             return Detection(None, (out.strip()[:100] or f"{label}: version unavailable"))
-        return Detection(_ver_tuple(m.group(1)) < _ver_tuple(fixed), f"{label}: {m.group(1)} (fixed >= {fixed})")
+        return Detection(_ver_key(m.group(1)) < _ver_key(fixed), f"{label}: {m.group(1)} (fixed >= {fixed})")
     return _fn
 
 def _kernel_lt(label: str, fixed: str):
@@ -247,8 +259,8 @@ SCENARIOS: list[Scenario] = [
         detect_fn=_version_lt("buildkit", "docker buildx version 2>/dev/null || buildctl --version 2>/dev/null",
                               r"v?([0-9]+\.[0-9]+\.[0-9]+)", "0.12.5")),
     Scenario("DK-21", Kind.DOCKER, Repro.VERSION, "runc symlink-exchange mount-destination race",
-        "HIGH", note="CVE-2021-30465 — fixed in runc 1.0.0-rc95 (version compare is coarse; verify against advisory).",
-        detect_fn=_runc_below("1.0.2")),
+        "HIGH", note="CVE-2021-30465 — fixed in runc 1.0.0-rc95.",
+        detect_fn=_runc_below("1.0.0-rc95")),
     Scenario("DK-22", Kind.DOCKER, Repro.VERSION, "containerd-shim abstract-socket exposure",
         "MEDIUM", note="CVE-2020-15257 — fixed in containerd 1.3.9/1.4.3; impactful with a host-netns container (see DK-09).",
         detect_fn=_version_lt("containerd", "containerd --version 2>/dev/null",
