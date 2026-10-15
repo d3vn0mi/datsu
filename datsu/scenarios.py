@@ -150,7 +150,7 @@ SCENARIOS: list[Scenario] = [
             '[ -n "$sig" ]')),
 
     Scenario("DK-09", Kind.DOCKER, Repro.CONFIG, "host network + IPC namespaces",
-        "HIGH", triage_ref="C6", confidence=C.DOCUMENTED,
+        "HIGH", triage_ref="C6/C7", confidence=C.DOCUMENTED,
         note="--network=host --ipc=host exposes host-only listeners and SysV/POSIX shm to the container.",
         detect_sh=_docker_any('.HostConfig.NetworkMode=="host" and .HostConfig.IpcMode=="host"'),
         exploit_sh=(
@@ -172,7 +172,7 @@ SCENARIOS: list[Scenario] = [
             'echo "$s" | grep -q "Seccomp:[[:space:]]*0"')),
 
     Scenario("DK-11", Kind.DOCKER, Repro.CONFIG, "no-new-privs off + setuid-root helper",
-        "HIGH", triage_ref="B10", confidence=C.CONCRETE,
+        "HIGH", triage_ref="B10/B11", confidence=C.CONCRETE,
         note="Without no-new-privileges a setuid-root helper lets a non-root container user become root in-container.",
         detect_sh=('for c in $(docker ps -q 2>/dev/null); do '
                    'docker exec "$c" sh -c "find /usr/local /opt /home /srv -xdev -perm -4000 -type f 2>/dev/null" 2>/dev/null '
@@ -197,7 +197,7 @@ SCENARIOS: list[Scenario] = [
             'echo "host write via unauth dockerd tcp/2375 ($MARKER)"; exit $ok')),
 
     Scenario("DK-13", Kind.DOCKER, Repro.CONFIG, "lab user in the docker group",
-        "HIGH", triage_ref="", confidence=C.CONCRETE,
+        "HIGH", triage_ref="C9", confidence=C.CONCRETE,
         note="docker-group membership is root-equivalent; no triage check covers it (detection gap).",
         detect_sh="getent group docker 2>/dev/null | awk -F: '{print $4}' | tr ',' '\\n' | grep .",
         exploit_sh=(
@@ -423,7 +423,7 @@ SCENARIOS: list[Scenario] = [
             'echo "privileged pod admitted + Running in a non-restricted ns ($MARKER)"; exit $ok')),
 
     Scenario("K8-08", Kind.K8S, Repro.CONFIG, "NET_RAW ARP/DNS spoof between co-located pods",
-        "MEDIUM", triage_ref="", confidence=C.DOCUMENTED,
+        "MEDIUM", triage_ref="D15", confidence=C.DOCUMENTED,
         note="Pods retaining NET_RAW on a shared pod network can ARP/DNS-spoof each other (no triage check).",
         detect_sh=_pods_any('(.metadata.namespace|startswith("kube-")|not) and ([.spec.containers[]?.securityContext.capabilities.drop//[] | .[]] | any(.=="ALL" or .=="NET_RAW") | not)'),
         exploit_sh=(

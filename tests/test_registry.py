@@ -120,3 +120,13 @@ def test_report_md_contains_reproduce_and_results():
     recs = [v.validate_scenario(_StubCtx(rc=0, out="x"), get("DK-01"), "M", settle=0)]
     md = v.report_md(recs, "M")
     assert "## Per-scenario detail" in md and "Reproduce" in md and "datsu exploit --id DK-01" in md
+
+
+def test_triage_refs_cover_new_and_secondary_checks():
+    """Every triage check the RavenSec pack emits maps to a scenario (research v2: C7, B11, and
+    the new C9 / D15 checks)."""
+    refs = {s.id: {x for x in s.triage_ref.split("/") if x} for s in SCENARIOS}
+    assert {"C6", "C7"} <= refs["DK-09"]
+    assert {"B10", "B11"} <= refs["DK-11"]
+    assert refs["DK-13"] == {"C9"}
+    assert refs["K8-08"] == {"D15"}
