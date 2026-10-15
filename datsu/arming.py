@@ -39,7 +39,7 @@ def _rbac(sid, api_groups, resources, verbs):
         f'rules: [{{apiGroups: ["{ag}"], resources: ["{rs}"], verbs: ["{vb}"]}}]\nEOF\n'
         f'kubectl -n {NS} create rolebinding {role}-rb --role={role} --serviceaccount={NS}:{sa} '
         f'--dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1')
-    return arm, f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1"
+    return arm, f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1"
 
 
 def _pod(sid, overrides):
@@ -48,7 +48,7 @@ def _pod(sid, overrides):
     arm = (f'kubectl create ns {NS} >/dev/null 2>&1; '
            f"kubectl -n {NS} run {name} --image=alpine --restart=Never --overrides='{overrides}' "
            f"--command -- sleep 600 >/dev/null 2>&1")
-    return arm, f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1"
+    return arm, f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1"
 
 
 # id -> (preconditions, arm_sh, cleanup_sh)
@@ -132,13 +132,13 @@ _m("K8-03", "A pod with a hostPath volume mounting the node root (/).",
 _m("K8-04", "A pod sharing host PID/Network/IPC namespaces.",
    *_pod("K8-04", '{"spec":{"hostPID":true,"hostNetwork":true,"hostIPC":true,"containers":[{"name":"c","image":"alpine","command":["sleep","600"]}]}}'))
 _m("K8-07", "A namespace without Pod Security 'restricted' enforcement.",
-   f'kubectl create ns {NS} >/dev/null 2>&1', f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1")
+   f'kubectl create ns {NS} >/dev/null 2>&1', f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1")
 _m("K8-08", "Two running pods retaining NET_RAW on a shared pod network.",
    f'kubectl create ns {NS} >/dev/null 2>&1; kubectl -n {NS} run datsu-arm-k808 --image=alpine --restart=Never --command -- sleep 600 >/dev/null 2>&1',
-   f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1")
+   f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1")
 _m("K8-09", "A Secret stored in the node's embedded etcd (on-disk db root-readable).",
    f'kubectl create ns {NS} >/dev/null 2>&1; kubectl -n {NS} create secret generic datsu-arm-k809 --from-literal=x=y >/dev/null 2>&1',
-   f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1")
+   f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1")
 _m("K8-10", "The k3s server manifests directory left world/group-writable.",
    'd=/var/lib/rancher/k3s/server/manifests; [ -d "$d" ] && { stat -c "%a" "$d" > /tmp/.datsu-k810; chmod 777 "$d"; }',
    'd=/var/lib/rancher/k3s/server/manifests; [ -f /tmp/.datsu-k810 ] && chmod "$(cat /tmp/.datsu-k810)" "$d" 2>/dev/null; rm -f /tmp/.datsu-k810')
@@ -155,11 +155,11 @@ _m("K8-36", "A pod adding a dangerous Linux capability via securityContext.capab
 _m("K8-37", "A legacy long-lived ServiceAccount-token Secret.",
    f'kubectl create ns {NS} >/dev/null 2>&1; kubectl -n {NS} create sa datsu-arm-sa837 --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1; '
    f'cat <<EOF | kubectl apply -f - >/dev/null 2>&1\napiVersion: v1\nkind: Secret\nmetadata: {{name: datsu-arm-k837, namespace: {NS}, annotations: {{kubernetes.io/service-account.name: datsu-arm-sa837}}}}\ntype: kubernetes.io/service-account-token\nEOF',
-   f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1")
+   f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1")
 _m("K8-39", "A pod on a non-default ServiceAccount with the token auto-mounted.",
    f'kubectl create ns {NS} >/dev/null 2>&1; kubectl -n {NS} create sa datsu-arm-sa839 --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1; '
    f'kubectl -n {NS} run datsu-arm-k839 --image=alpine --restart=Never --overrides=\'{{"spec":{{"serviceAccountName":"datsu-arm-sa839"}}}}\' --command -- sleep 600 >/dev/null 2>&1',
-   f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1")
+   f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1")
 _m("K8-41", "A pod with shareProcessNamespace: true.",
    *_pod("K8-41", '{"spec":{"shareProcessNamespace":true,"containers":[{"name":"c","image":"alpine","command":["sleep","600"]}]}}'))
 _m("K8-42", "A pod running as root (no runAsNonRoot).",
@@ -170,7 +170,7 @@ _m("K8-45", "A pod using a (deprecated) gitRepo volume.",
    *_pod("K8-45", '{"spec":{"containers":[{"name":"c","image":"alpine","command":["sleep","600"],"volumeMounts":[{"name":"g","mountPath":"/repo"}]}],"volumes":[{"name":"g","gitRepo":{"repository":"https://example.com/x.git"}}]}}'))
 _m("K8-53", "A pod running an unpinned :latest image.",
    f'kubectl create ns {NS} >/dev/null 2>&1; kubectl -n {NS} run datsu-arm-k853 --image=alpine:latest --restart=Never --command -- sleep 600 >/dev/null 2>&1',
-   f"kubectl delete ns {NS} --wait=false >/dev/null 2>&1")
+   f"kubectl delete ns {NS} --wait=true --timeout=120s >/dev/null 2>&1")
 
 # ---- Kubernetes RBAC (generic) ----
 _m("K8-01", "A non-system ServiceAccount bound to a Role granting create on pods.", *_rbac("K8-01", [""], ["pods"], ["create"]))

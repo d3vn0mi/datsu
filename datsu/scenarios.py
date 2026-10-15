@@ -474,7 +474,14 @@ SCENARIOS: list[Scenario] = [
     Scenario("K8-12", Kind.K8S, Repro.CONFIG, "apiserver anonymous-auth",
         "CRITICAL", triage_ref="D4", confidence=C.DOCUMENTED,
         note="Anonymous apiserver lets system:anonymous reach the API (impact depends on anon RBAC).",
-        detect_sh='code=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 https://127.0.0.1:6443/api 2>/dev/null); echo "apiserver /api (anon) -> $code"; [ "$code" = 200 ]',
+        # 200 = anonymous discovery allowed. 403 naming system:anonymous = anonymous auth is ON and
+        # only RBAC denies discovery (the RS_lab2 K8-12 'miss'); 401 = anonymous auth off.
+        detect_sh=('out=$(curl -sk --max-time 3 -w "\n%{http_code}" https://127.0.0.1:6443/api 2>/dev/null); '
+                   'code=$(printf "%s" "$out" | tail -n1); '
+                   'if [ "$code" = 200 ]; then echo "apiserver /api (anon) -> 200"; exit 0; fi; '
+                   'if [ "$code" = 403 ] && printf "%s" "$out" | grep -q "system:anonymous"; then '
+                   'echo "apiserver anonymous auth ON (403 as system:anonymous; discovery RBAC-denied)"; exit 0; fi; '
+                   'echo "apiserver /api (anon) -> $code"; exit 1'),
         exploit_sh='out=$(curl -sk --max-time 4 https://127.0.0.1:6443/api 2>/dev/null | head -c 160); echo "anon apiserver discovery ($MARKER): $out"; echo "$out" | grep -q "APIVersions"'),
 
     Scenario("K8-13", Kind.K8S, Repro.CONFIG, "system:anonymous bound to a ClusterRole",
