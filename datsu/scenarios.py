@@ -425,7 +425,11 @@ SCENARIOS: list[Scenario] = [
     Scenario("K8-08", Kind.K8S, Repro.CONFIG, "NET_RAW ARP/DNS spoof between co-located pods",
         "MEDIUM", triage_ref="D15", confidence=C.DOCUMENTED,
         note="Pods retaining NET_RAW on a shared pod network can ARP/DNS-spoof each other (no triage check).",
-        detect_sh=_pods_any('(.metadata.namespace|startswith("kube-")|not) and ([.spec.containers[]?.securityContext.capabilities.drop//[] | .[]] | any(.=="ALL" or .=="NET_RAW") | not)'),
+        # same semantics as RavenSec triage D15: stock k3s system namespaces excluded (kube-*,
+        # local-path-*), drop names case-insensitive, flagged if ANY container keeps NET_RAW
+        detect_sh=_pods_any('(.metadata.namespace|test("^(kube-|local-path-)")|not) and '
+                            'any(.spec.containers[]?; ((.securityContext.capabilities.drop // []) '
+                            '| map(ascii_upcase) | (index("ALL") or index("NET_RAW"))) | not)'),
         exploit_sh=(
             'kubectl create ns esc-x >/dev/null 2>&1\n'
             'kubectl -n esc-x run esc-x-k808a --image=nicolaka/netshoot --restart=Never --command -- sleep 120 >/dev/null 2>&1\n'

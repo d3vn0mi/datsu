@@ -72,3 +72,30 @@ def test_namespace_cleanups_wait_for_deletion():
         c = m.get("cleanup") or ""
         if "delete ns" in c:
             assert "--wait=false" not in c and "--wait=true" in c, sid
+
+
+def _pods(shim, tmp_path, items):
+    (tmp_path / "pods.json").write_text(json.dumps({"items": items}))
+    shim("kubectl", f'cat "{tmp_path}/pods.json"\n')
+
+
+def _pod(ns, name, drop=None):
+    caps = {} if drop is None else {"drop": drop}
+    return {"metadata": {"namespace": ns, "name": name},
+            "spec": {"containers": [{"name": "c", "securityContext": {"capabilities": caps}}]}}
+
+
+def test_k808_ignores_stock_k3s_system_namespaces(shim, tmp_path):
+    _pods(shim, tmp_path, [_pod("kube-system", "coredns"), _pod("local-path-storage", "local-path-provisioner")])
+    assert get("K8-08").detect(Context()).present is False
+
+
+def test_k808_lowercase_drop_all_counts(shim, tmp_path):
+    _pods(shim, tmp_path, [_pod("app", "a", drop=["all"])])
+    assert get("K8-08").detect(Context()).present is False
+
+
+def test_k808_pod_keeping_net_raw(shim, tmp_path):
+    _pods(shim, tmp_path, [_pod("esc-lab", "esc-k8-08-a")])
+    d = get("K8-08").detect(Context())
+    assert d.present is True and "esc-lab/esc-k8-08-a" in d.evidence
