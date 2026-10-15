@@ -223,6 +223,13 @@ for _v, _p in {
     _m(_v, _p)
 
 
+# ---- research v2 field-technique detectors (detection only; not auto-armed) ----
+_m("DK-39", "Docker Engine < 20.10.9 with data-root subdirectories traversable by others (CVE-2021-41091).")
+_m("DK-40", "Docker Desktop 4.25 to before 4.44.3, or the Engine API reachable at 192.168.65.7:2375 from a container (CVE-2025-9074).")
+_m("DK-41", "dockerd listening with TLS on :2376 and its CA private key readable by group/others.")
+_m("DK-42", "A local user who is a member of the lxd or lxc group.")
+
+
 def apply(scenarios):
     """Stamp preconditions / arm_sh / cleanup_sh onto the registry from METADATA."""
     for s in scenarios:

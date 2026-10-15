@@ -2,7 +2,7 @@
 
 **Datsu** (*datsugoku*, 脱獄 — "jailbreak") is a single, consolidated tool that **detects** Docker &
 Kubernetes container-escape conditions on a node (read-only) and, when you authorize it, **exploits**
-them to prove the breakout. 93 scenarios — 38 Docker/host, 55 Kubernetes — covering privileged
+them to prove the breakout. 97 scenarios — 42 Docker/host, 55 Kubernetes — covering privileged
 containers, dangerous capabilities, host mounts and namespaces, exposed daemons, kubelet/apiserver
 anonymous auth, dangerous RBAC, writable control-plane paths, and cleartext etcd.
 
@@ -127,7 +127,7 @@ single execution choke point (every command runs through `Context.sh`, with dry-
 
 ## Scenario catalogue
 
-Run `datsu list` for the live catalogue (93 scenarios: 38 Docker/host, 55 Kubernetes).
+Run `datsu list` for the live catalogue (97 scenarios: 42 Docker/host, 55 Kubernetes).
 
 ### Docker / host
 | ID | Vector | Sev | Exploit | CVE |
@@ -170,6 +170,10 @@ Run `datsu list` for the live catalogue (93 scenarios: 38 Docker/host, 55 Kubern
 | DK-36 | SELinux label disabled (label:disable) | HIGH | precondition |  |
 | DK-37 | containerd / BuildKit socket bind-mounted into a container | CRITICAL | precondition |  |
 | DK-38 | host /lib/modules or /boot bind-mounted | HIGH | precondition |  |
+| DK-39 | Moby data-root traversable by unprivileged users (overlay2) | HIGH | version | CVE-2021-41091 |
+| DK-40 | Docker Desktop Engine API reachable from containers | CRITICAL | version | CVE-2025-9074 |
+| DK-41 | dockerd TLS (:2376) with a group/world-readable CA private key | HIGH | precondition |  |
+| DK-42 | users in the lxd / lxc group | HIGH | precondition |  |
 
 ### Kubernetes
 | ID | Vector | Sev | Exploit | CVE |

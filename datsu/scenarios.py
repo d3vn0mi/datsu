@@ -11,7 +11,9 @@ validation report. Author: d3vn0mi (RavenSec).
 """
 from __future__ import annotations
 
+import os
 import re
+import shlex
 
 from .context import Context, rbac_detector, rbac_exploit
 from .model import Confidence as C, Detection, Kind, Repro, Scenario
@@ -129,6 +131,61 @@ def _kernel_cna(cve: str, introduced: tuple, fixes: dict, mainline_fix: tuple, b
 
 def _kernel_lt(label: str, fixed: str):
     return _version_lt(label, "uname -r", r"^([0-9]+\.[0-9]+(?:\.[0-9]+)?)", fixed)
+
+# --- field-technique detectors (research v2, step 4; detection only) --------------------------
+
+def _dk39_moby_dataroot(ctx: Context) -> Detection:
+    """CVE-2021-41091: Moby < 20.10.9 left data-root subdirectories traversable by unprivileged
+    users. Absent when fixed, or when the workaround (no others-execute on overlay2) is applied."""
+    if not ctx.have("docker"):
+        return Detection(None, "docker not found on PATH")
+    _rc, out = ctx.sh("docker version -f '{{.Server.Version}}' 2>/dev/null")
+    m = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", out)
+    if not m:
+        return Detection(None, "docker server version unavailable")
+    ver = m.group(1)
+    if _ver_key(ver) >= _ver_key("20.10.9"):
+        return Detection(False, f"docker {ver} (fixed >= 20.10.9)")
+    _rc, root = ctx.sh("docker info -f '{{.DockerRootDir}}' 2>/dev/null")
+    root = (root.strip().splitlines() or ["/var/lib/docker"])[0] or "/var/lib/docker"
+    _rc, perm = ctx.sh(f"stat -c '%a' {shlex.quote(root + '/overlay2')} 2>/dev/null")
+    perm = perm.strip()
+    if not perm.isdigit():
+        return Detection(True, f"docker {ver} < 20.10.9; {root}/overlay2 not found — check data-root permissions")
+    if int(perm[-1]) & 1:
+        return Detection(True, f"docker {ver} < 20.10.9 and {root}/overlay2 is {perm} (others can traverse)")
+    return Detection(False, f"docker {ver} < 20.10.9 but {root}/overlay2 is {perm} (workaround applied)")
+
+
+def _dk40_desktop_engine_api(ctx: Context) -> Detection:
+    """CVE-2025-9074: Docker Desktop 4.25 <= v < 4.44.3 exposes the Engine API to containers at
+    192.168.65.7:2375. From the host: Desktop version. From inside a container: GET /version."""
+    _rc, plat = ctx.sh("docker version -f '{{.Server.Platform.Name}}' 2>/dev/null")
+    m = re.search(r"Docker Desktop ([0-9]+\.[0-9]+(?:\.[0-9]+)?)", plat)
+    if m:
+        v = _ver_key(m.group(1))
+        hit = _ver_key("4.25") <= v < _ver_key("4.44.3")
+        return Detection(hit, f"Docker Desktop {m.group(1)} (affected 4.25 to before 4.44.3)")
+    _rc, code = ctx.sh('curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://192.168.65.7:2375/version 2>/dev/null')
+    if code.strip() == "200":
+        return Detection(True, "Engine API answers without auth at 192.168.65.7:2375 from this container (CVE-2025-9074)")
+    return Detection(False, "not Docker Desktop; 192.168.65.7:2375 not reachable")
+
+
+def _dk41_tls_ca_key(ctx: Context) -> Detection:
+    """dockerd on :2376 (TLS) whose CA private key is group/world-readable: anyone who can read it
+    can mint a client certificate the daemon (and a CN-based authz plugin) will accept."""
+    _rc, ss = ctx.sh("(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null)")
+    if not re.search(r"[.:]2376\b", ss):
+        return Detection(False, "dockerd not listening on :2376")
+    dirs = os.environ.get("DATSU_DOCKER_KEY_DIRS", "/etc/docker /root/.docker /home/*/.docker")
+    _rc, out = ctx.sh(f"for d in {dirs}; do find \"$d\" -maxdepth 2 -type f "
+                      "\\( -name 'ca-key.pem' -o -name 'ca.key' \\) -perm /044 2>/dev/null; done")
+    hits = [l for l in out.splitlines() if l.strip()]
+    if hits:
+        return Detection(True, "dockerd :2376 and CA private key readable by group/others: " + ", ".join(hits))
+    return Detection(False, f"dockerd :2376; no group/world-readable CA key under {dirs}")
+
 
 # dangerous Linux capabilities that a k8s pod can request via securityContext.capabilities.add
 _DANGEROUS_CAPS = ["SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_RAWIO", "DAC_READ_SEARCH",
@@ -407,6 +464,27 @@ SCENARIOS: list[Scenario] = [
         "HIGH", confidence=C.PRECONDITION,
         note="with CAP_SYS_MODULE (DK-04) a mounted /lib/modules lets a crafted module load into the host kernel.",
         detect_sh=_docker_any('.Mounts[]? | .Source | test("^/(lib/modules|boot)")')),
+
+    # --- field techniques from CTF solves (research v2; detection only) ---
+    Scenario("DK-39", Kind.DOCKER, Repro.VERSION, "Moby data-root traversable by unprivileged users (overlay2)",
+        "HIGH", detect_fn=_dk39_moby_dataroot,
+        note="CVE-2021-41091 — fixed in Moby (Docker Engine) 20.10.9 (CVE record). Unprivileged host users "
+             "can traverse data-root subdirectories and run setuid programs from container layers. "
+             "Workaround: no others-execute on the data-root subdirectories."),
+    Scenario("DK-40", Kind.DOCKER, Repro.VERSION, "Docker Desktop Engine API reachable from containers",
+        "CRITICAL", detect_fn=_dk40_desktop_engine_api,
+        note="CVE-2025-9074 — Docker Desktop 4.25 to before 4.44.3: containers reach the Engine API at "
+             "192.168.65.7:2375 without auth, with or without ECI (CVE record)."),
+    Scenario("DK-41", Kind.DOCKER, Repro.CONFIG, "dockerd TLS (:2376) with a group/world-readable CA private key",
+        "HIGH", confidence=C.PRECONDITION, detect_fn=_dk41_tls_ca_key,
+        note="a readable CA key lets anyone mint a client certificate dockerd accepts, including a CN that an "
+             "authz plugin trusts (field-proven on a CTF solve)."),
+    Scenario("DK-42", Kind.DOCKER, Repro.CONFIG, "users in the lxd / lxc group",
+        "HIGH", confidence=C.PRECONDITION,
+        note="lxd/lxc group membership is root-equivalent: the user can start a privileged container with the "
+             "host filesystem attached.",
+        detect_sh=("for g in lxd lxc; do getent group $g 2>/dev/null | "
+                   "awk -F: -v g=$g '$4!=\"\" {print g\": \"$4}'; done | grep .")),
 
     # ============================= Kubernetes =============================
     Scenario("K8-01", Kind.K8S, Repro.CONFIG, "ServiceAccount bound to a Role granting create pods",

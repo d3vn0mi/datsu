@@ -11,10 +11,10 @@ from datsu.model import Confidence, Detection, Exploitation, Repro, Scenario
 
 
 def test_expected_catalogue_shape():
-    assert len(SCENARIOS) == 93
+    assert len(SCENARIOS) == 97
     ids = [s.id for s in SCENARIOS]
     assert len(ids) == len(set(ids)), "duplicate scenario ids"
-    assert sum(s.kind.value == "docker" for s in SCENARIOS) == 38
+    assert sum(s.kind.value == "docker" for s in SCENARIOS) == 42
     assert sum(s.kind.value == "k8s" for s in SCENARIOS) == 55
 
 
@@ -79,7 +79,7 @@ def test_exploit_refuses_without_marker(capsys):
 def test_list_json_is_valid_and_complete(capsys):
     assert main(["list", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert len(data) == 93
+    assert len(data) == 97
     assert {"id", "class", "repro", "vector", "severity", "confidence"} <= set(data[0])
 
 
