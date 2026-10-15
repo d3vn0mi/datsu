@@ -11,7 +11,9 @@ validation report. Author: d3vn0mi (RavenSec).
 """
 from __future__ import annotations
 
+import os
 import re
+import shlex
 
 from .context import Context, rbac_detector, rbac_exploit
 from .model import Confidence as C, Detection, Kind, Repro, Scenario
@@ -29,18 +31,30 @@ def _pods_any(jq_select: str) -> str:
 
 _CAP = 'select((.HostConfig.CapAdd//[]) | map(ltrimstr("CAP_")) | index("{}"))'
 
-def _ver_tuple(s: str):
-    return tuple(int(x) for x in re.findall(r"\d+", s)[:3])
+_VER = re.compile(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-rc\.?(\d+))?")
+
+def _ver_key(s: str):
+    """Sortable key for a version string: (major, minor, patch, is_final, rc).
+
+    A `-rcN` pre-release sorts before its final release and rc numbers compare numerically
+    (1.0.0-rc6 < 1.0.0-rc95 < 1.0.0). Any other suffix (kernel '-139-generic', '+dev') is ignored."""
+    m = _VER.search(s or "")
+    if not m:
+        return ()
+    maj, mi, pa, rc = m.groups()
+    return (int(maj), int(mi or 0), int(pa or 0), 0 if rc else 1, int(rc or 0))
+
+_ver_tuple = _ver_key   # backwards-compatible name
 
 def _runc_below(fixed: str):
     def _fn(ctx: Context) -> Detection:
         if not ctx.have("runc"):
             return Detection(None, "runc binary not found on PATH")
         _rc, out = ctx.sh("runc --version")
-        m = re.search(r"runc version ([0-9][0-9.]*)", out)
+        m = re.search(r"runc version ([0-9][0-9.]*(?:-rc\.?[0-9]+)?)", out)
         if not m:
             return Detection(None, out.strip()[:120] or "could not parse runc --version")
-        cur, fix = _ver_tuple(m.group(1)), _ver_tuple(fixed)
+        cur, fix = _ver_key(m.group(1)), _ver_key(fixed)
         return Detection(cur < fix, f"runc {m.group(1)} (fixed in >= {fixed})")
     return _fn
 
@@ -60,11 +74,118 @@ def _version_lt(label: str, probe: str, pattern: str, fixed: str, tool: str = No
         m = re.search(pattern, out)
         if not m:
             return Detection(None, (out.strip()[:100] or f"{label}: version unavailable"))
-        return Detection(_ver_tuple(m.group(1)) < _ver_tuple(fixed), f"{label}: {m.group(1)} (fixed >= {fixed})")
+        return Detection(_ver_key(m.group(1)) < _ver_key(fixed), f"{label}: {m.group(1)} (fixed >= {fixed})")
+    return _fn
+
+def _runc_branches(fixes: dict):
+    """runc detector for advisories fixed per release branch. `fixes` maps (major, minor) to the
+    fixed version on that branch; branches older than every listed one are affected, newer are not."""
+    keys = sorted(fixes)
+    def _fn(ctx: Context) -> Detection:
+        if not ctx.have("runc"):
+            return Detection(None, "runc binary not found on PATH")
+        _rc, out = ctx.sh("runc --version")
+        m = re.search(r"runc version ([0-9][0-9.]*(?:-rc\.?[0-9]+)?)", out)
+        if not m:
+            return Detection(None, out.strip()[:120] or "could not parse runc --version")
+        cur = _ver_key(m.group(1))
+        br = cur[:2]
+        if br in fixes:
+            hit = cur < _ver_key(fixes[br])
+        else:
+            hit = br < keys[0]
+        fixed = ", ".join(fixes[k] for k in keys)
+        return Detection(hit, f"runc {m.group(1)} (fixed in {fixed})")
+    return _fn
+
+def _kernel_cna(cve: str, introduced: tuple, fixes: dict, mainline_fix: tuple, backports=()):
+    """Kernel detector driven by the kernel.org CNA record's per-branch table.
+
+    introduced: (major, minor) of the first affected mainline release; backports: [(lo, hi)]
+    patch-level ranges where a stable branch older than `introduced` received the bug;
+    fixes: (major, minor) -> first fixed (major, minor, patch) on that stable branch;
+    mainline_fix: first fixed mainline release. A distro kernel (any suffix after X.Y.Z, e.g.
+    '6.8.0-139-generic') may carry vendor backports of the bug or the fix, so it is reported
+    inconclusive with the upstream verdict in the evidence."""
+    def _fn(ctx: Context) -> Detection:
+        _rc, out = ctx.sh("uname -r")
+        rel = out.strip().splitlines()[0] if out.strip() else ""
+        m = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?(.*)$", rel)
+        if not m:
+            return Detection(None, f"could not parse kernel release {rel!r}")
+        key = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+        if any(lo <= key < hi for lo, hi in backports):
+            hit = True
+        elif key[:2] < introduced:
+            hit = False
+        elif key[:2] in fixes:
+            hit = key < fixes[key[:2]]
+        else:
+            hit = key < mainline_fix
+        verdict = "affected" if hit else "not affected / fixed"
+        if m.group(4).strip() not in ("", "+"):
+            return Detection(None, f"kernel {rel}: upstream {verdict} for {cve} per the kernel CNA branch table; "
+                                   "distro kernel — check the vendor advisory (backports)")
+        return Detection(hit, f"kernel {rel}: {verdict} for {cve} (kernel CNA branch table)")
     return _fn
 
 def _kernel_lt(label: str, fixed: str):
     return _version_lt(label, "uname -r", r"^([0-9]+\.[0-9]+(?:\.[0-9]+)?)", fixed)
+
+# --- field-technique detectors (research v2, step 4; detection only) --------------------------
+
+def _dk39_moby_dataroot(ctx: Context) -> Detection:
+    """CVE-2021-41091: Moby < 20.10.9 left data-root subdirectories traversable by unprivileged
+    users. Absent when fixed, or when the workaround (no others-execute on overlay2) is applied."""
+    if not ctx.have("docker"):
+        return Detection(None, "docker not found on PATH")
+    _rc, out = ctx.sh("docker version -f '{{.Server.Version}}' 2>/dev/null")
+    m = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", out)
+    if not m:
+        return Detection(None, "docker server version unavailable")
+    ver = m.group(1)
+    if _ver_key(ver) >= _ver_key("20.10.9"):
+        return Detection(False, f"docker {ver} (fixed >= 20.10.9)")
+    _rc, root = ctx.sh("docker info -f '{{.DockerRootDir}}' 2>/dev/null")
+    root = (root.strip().splitlines() or ["/var/lib/docker"])[0] or "/var/lib/docker"
+    _rc, perm = ctx.sh(f"stat -c '%a' {shlex.quote(root + '/overlay2')} 2>/dev/null")
+    perm = perm.strip()
+    if not perm.isdigit():
+        return Detection(True, f"docker {ver} < 20.10.9; {root}/overlay2 not found — check data-root permissions")
+    if int(perm[-1]) & 1:
+        return Detection(True, f"docker {ver} < 20.10.9 and {root}/overlay2 is {perm} (others can traverse)")
+    return Detection(False, f"docker {ver} < 20.10.9 but {root}/overlay2 is {perm} (workaround applied)")
+
+
+def _dk40_desktop_engine_api(ctx: Context) -> Detection:
+    """CVE-2025-9074: Docker Desktop 4.25 <= v < 4.44.3 exposes the Engine API to containers at
+    192.168.65.7:2375. From the host: Desktop version. From inside a container: GET /version."""
+    _rc, plat = ctx.sh("docker version -f '{{.Server.Platform.Name}}' 2>/dev/null")
+    m = re.search(r"Docker Desktop ([0-9]+\.[0-9]+(?:\.[0-9]+)?)", plat)
+    if m:
+        v = _ver_key(m.group(1))
+        hit = _ver_key("4.25") <= v < _ver_key("4.44.3")
+        return Detection(hit, f"Docker Desktop {m.group(1)} (affected 4.25 to before 4.44.3)")
+    _rc, code = ctx.sh('curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://192.168.65.7:2375/version 2>/dev/null')
+    if code.strip() == "200":
+        return Detection(True, "Engine API answers without auth at 192.168.65.7:2375 from this container (CVE-2025-9074)")
+    return Detection(False, "not Docker Desktop; 192.168.65.7:2375 not reachable")
+
+
+def _dk41_tls_ca_key(ctx: Context) -> Detection:
+    """dockerd on :2376 (TLS) whose CA private key is group/world-readable: anyone who can read it
+    can mint a client certificate the daemon (and a CN-based authz plugin) will accept."""
+    _rc, ss = ctx.sh("(ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null)")
+    if not re.search(r"[.:]2376\b", ss):
+        return Detection(False, "dockerd not listening on :2376")
+    dirs = os.environ.get("DATSU_DOCKER_KEY_DIRS", "/etc/docker /root/.docker /home/*/.docker")
+    _rc, out = ctx.sh(f"for d in {dirs}; do find \"$d\" -maxdepth 2 -type f "
+                      "\\( -name 'ca-key.pem' -o -name 'ca.key' \\) -perm /044 2>/dev/null; done")
+    hits = [l for l in out.splitlines() if l.strip()]
+    if hits:
+        return Detection(True, "dockerd :2376 and CA private key readable by group/others: " + ", ".join(hits))
+    return Detection(False, f"dockerd :2376; no group/world-readable CA key under {dirs}")
+
 
 # dangerous Linux capabilities that a k8s pod can request via securityContext.capabilities.add
 _DANGEROUS_CAPS = ["SYS_ADMIN", "SYS_MODULE", "SYS_PTRACE", "SYS_RAWIO", "DAC_READ_SEARCH",
@@ -150,7 +271,7 @@ SCENARIOS: list[Scenario] = [
             '[ -n "$sig" ]')),
 
     Scenario("DK-09", Kind.DOCKER, Repro.CONFIG, "host network + IPC namespaces",
-        "HIGH", triage_ref="C6", confidence=C.DOCUMENTED,
+        "HIGH", triage_ref="C6/C7", confidence=C.DOCUMENTED,
         note="--network=host --ipc=host exposes host-only listeners and SysV/POSIX shm to the container.",
         detect_sh=_docker_any('.HostConfig.NetworkMode=="host" and .HostConfig.IpcMode=="host"'),
         exploit_sh=(
@@ -172,7 +293,7 @@ SCENARIOS: list[Scenario] = [
             'echo "$s" | grep -q "Seccomp:[[:space:]]*0"')),
 
     Scenario("DK-11", Kind.DOCKER, Repro.CONFIG, "no-new-privs off + setuid-root helper",
-        "HIGH", triage_ref="B10", confidence=C.CONCRETE,
+        "HIGH", triage_ref="B10/B11", confidence=C.CONCRETE,
         note="Without no-new-privileges a setuid-root helper lets a non-root container user become root in-container.",
         detect_sh=('for c in $(docker ps -q 2>/dev/null); do '
                    'docker exec "$c" sh -c "find /usr/local /opt /home /srv -xdev -perm -4000 -type f 2>/dev/null" 2>/dev/null '
@@ -197,7 +318,7 @@ SCENARIOS: list[Scenario] = [
             'echo "host write via unauth dockerd tcp/2375 ($MARKER)"; exit $ok')),
 
     Scenario("DK-13", Kind.DOCKER, Repro.CONFIG, "lab user in the docker group",
-        "HIGH", triage_ref="", confidence=C.CONCRETE,
+        "HIGH", triage_ref="C9", confidence=C.CONCRETE,
         note="docker-group membership is root-equivalent; no triage check covers it (detection gap).",
         detect_sh="getent group docker 2>/dev/null | awk -F: '{print $4}' | tr ',' '\\n' | grep .",
         exploit_sh=(
@@ -231,11 +352,20 @@ SCENARIOS: list[Scenario] = [
         note="CVE-2024-21626 — fixed in runc 1.1.12."),
 
     Scenario("DK-17", Kind.DOCKER, Repro.VERSION, "runc 2025 maskedPaths/procfs race family",
-        "HIGH", triage_ref="A3", detect_fn=_runc_below("1.2.8"),
-        note="2025 maskedPaths/procfs race family — fixed in runc 1.2.8."),
+        "HIGH", triage_ref="A3",
+        detect_fn=_runc_branches({(1, 2): "1.2.8", (1, 3): "1.3.3", (1, 4): "1.4.0-rc.3"}),
+        note="CVE-2025-31133 / CVE-2025-52565 / CVE-2025-52881 — fixed in runc 1.2.8, 1.3.3 and "
+             "1.4.0-rc.3 (GHSA-9493-h29p-rfm2)."),
 
     Scenario("DK-18", Kind.DOCKER, Repro.VERSION, "kernel LPE from an unprivileged container",
-        "HIGH", triage_ref="A1", detect_fn=_kernel_precondition("verify against the published kernel-LPE advisory floor (placeholder in the pack)")),
+        "HIGH", triage_ref="A1",
+        detect_fn=_kernel_cna("CVE-2026-80521", introduced=(6, 10),
+                              fixes={(6, 12): (6, 12, 111), (6, 18): (6, 18, 53), (7, 1): (7, 1, 10)},
+                              mainline_fix=(7, 2, 0),
+                              backports=[((6, 1, 141), (6, 1, 189)), ((6, 6, 93), (6, 6, 158))]),
+        note="CVE-2026-80521 — AF_UNIX garbage-collector use-after-free reachable from a container. "
+             "Kernel CNA record: introduced 6.10 (backported into 6.1.141 and 6.6.93); fixed in 6.1.189, "
+             "6.6.158, 6.12.111, 6.18.53, 7.1.10, mainline 7.2. Distro kernels: vendor advisory."),
 
     # --- Docker/runtime CVEs (version-pinned, detect-only) ---
     Scenario("DK-19", Kind.DOCKER, Repro.VERSION, "runc /proc/self/exe host-binary overwrite",
@@ -247,8 +377,8 @@ SCENARIOS: list[Scenario] = [
         detect_fn=_version_lt("buildkit", "docker buildx version 2>/dev/null || buildctl --version 2>/dev/null",
                               r"v?([0-9]+\.[0-9]+\.[0-9]+)", "0.12.5")),
     Scenario("DK-21", Kind.DOCKER, Repro.VERSION, "runc symlink-exchange mount-destination race",
-        "HIGH", note="CVE-2021-30465 — fixed in runc 1.0.0-rc95 (version compare is coarse; verify against advisory).",
-        detect_fn=_runc_below("1.0.2")),
+        "HIGH", note="CVE-2021-30465 — fixed in runc 1.0.0-rc95.",
+        detect_fn=_runc_below("1.0.0-rc95")),
     Scenario("DK-22", Kind.DOCKER, Repro.VERSION, "containerd-shim abstract-socket exposure",
         "MEDIUM", note="CVE-2020-15257 — fixed in containerd 1.3.9/1.4.3; impactful with a host-netns container (see DK-09).",
         detect_fn=_version_lt("containerd", "containerd --version 2>/dev/null",
@@ -334,6 +464,27 @@ SCENARIOS: list[Scenario] = [
         "HIGH", confidence=C.PRECONDITION,
         note="with CAP_SYS_MODULE (DK-04) a mounted /lib/modules lets a crafted module load into the host kernel.",
         detect_sh=_docker_any('.Mounts[]? | .Source | test("^/(lib/modules|boot)")')),
+
+    # --- field techniques from CTF solves (research v2; detection only) ---
+    Scenario("DK-39", Kind.DOCKER, Repro.VERSION, "Moby data-root traversable by unprivileged users (overlay2)",
+        "HIGH", detect_fn=_dk39_moby_dataroot,
+        note="CVE-2021-41091 — fixed in Moby (Docker Engine) 20.10.9 (CVE record). Unprivileged host users "
+             "can traverse data-root subdirectories and run setuid programs from container layers. "
+             "Workaround: no others-execute on the data-root subdirectories."),
+    Scenario("DK-40", Kind.DOCKER, Repro.VERSION, "Docker Desktop Engine API reachable from containers",
+        "CRITICAL", detect_fn=_dk40_desktop_engine_api,
+        note="CVE-2025-9074 — Docker Desktop 4.25 to before 4.44.3: containers reach the Engine API at "
+             "192.168.65.7:2375 without auth, with or without ECI (CVE record)."),
+    Scenario("DK-41", Kind.DOCKER, Repro.CONFIG, "dockerd TLS (:2376) with a group/world-readable CA private key",
+        "HIGH", confidence=C.PRECONDITION, detect_fn=_dk41_tls_ca_key,
+        note="a readable CA key lets anyone mint a client certificate dockerd accepts, including a CN that an "
+             "authz plugin trusts (field-proven on a CTF solve)."),
+    Scenario("DK-42", Kind.DOCKER, Repro.CONFIG, "users in the lxd / lxc group",
+        "HIGH", confidence=C.PRECONDITION,
+        note="lxd/lxc group membership is root-equivalent: the user can start a privileged container with the "
+             "host filesystem attached.",
+        detect_sh=("for g in lxd lxc; do getent group $g 2>/dev/null | "
+                   "awk -F: -v g=$g '$4!=\"\" {print g\": \"$4}'; done | grep .")),
 
     # ============================= Kubernetes =============================
     Scenario("K8-01", Kind.K8S, Repro.CONFIG, "ServiceAccount bound to a Role granting create pods",
@@ -423,9 +574,13 @@ SCENARIOS: list[Scenario] = [
             'echo "privileged pod admitted + Running in a non-restricted ns ($MARKER)"; exit $ok')),
 
     Scenario("K8-08", Kind.K8S, Repro.CONFIG, "NET_RAW ARP/DNS spoof between co-located pods",
-        "MEDIUM", triage_ref="", confidence=C.DOCUMENTED,
+        "MEDIUM", triage_ref="D15", confidence=C.DOCUMENTED,
         note="Pods retaining NET_RAW on a shared pod network can ARP/DNS-spoof each other (no triage check).",
-        detect_sh=_pods_any('(.metadata.namespace|startswith("kube-")|not) and ([.spec.containers[]?.securityContext.capabilities.drop//[] | .[]] | any(.=="ALL" or .=="NET_RAW") | not)'),
+        # same semantics as RavenSec triage D15: stock k3s system namespaces excluded (kube-*,
+        # local-path-*), drop names case-insensitive, flagged if ANY container keeps NET_RAW
+        detect_sh=_pods_any('(.metadata.namespace|test("^(kube-|local-path-)")|not) and '
+                            'any(.spec.containers[]?; ((.securityContext.capabilities.drop // []) '
+                            '| map(ascii_upcase) | (index("ALL") or index("NET_RAW"))) | not)'),
         exploit_sh=(
             'kubectl create ns esc-x >/dev/null 2>&1\n'
             'kubectl -n esc-x run esc-x-k808a --image=nicolaka/netshoot --restart=Never --command -- sleep 120 >/dev/null 2>&1\n'
@@ -474,7 +629,14 @@ SCENARIOS: list[Scenario] = [
     Scenario("K8-12", Kind.K8S, Repro.CONFIG, "apiserver anonymous-auth",
         "CRITICAL", triage_ref="D4", confidence=C.DOCUMENTED,
         note="Anonymous apiserver lets system:anonymous reach the API (impact depends on anon RBAC).",
-        detect_sh='code=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 3 https://127.0.0.1:6443/api 2>/dev/null); echo "apiserver /api (anon) -> $code"; [ "$code" = 200 ]',
+        # 200 = anonymous discovery allowed. 403 naming system:anonymous = anonymous auth is ON and
+        # only RBAC denies discovery (the RS_lab2 K8-12 'miss'); 401 = anonymous auth off.
+        detect_sh=('out=$(curl -sk --max-time 3 -w "\n%{http_code}" https://127.0.0.1:6443/api 2>/dev/null); '
+                   'code=$(printf "%s" "$out" | tail -n1); '
+                   'if [ "$code" = 200 ]; then echo "apiserver /api (anon) -> 200"; exit 0; fi; '
+                   'if [ "$code" = 403 ] && printf "%s" "$out" | grep -q "system:anonymous"; then '
+                   'echo "apiserver anonymous auth ON (403 as system:anonymous; discovery RBAC-denied)"; exit 0; fi; '
+                   'echo "apiserver /api (anon) -> $code"; exit 1'),
         exploit_sh='out=$(curl -sk --max-time 4 https://127.0.0.1:6443/api 2>/dev/null | head -c 160); echo "anon apiserver discovery ($MARKER): $out"; echo "$out" | grep -q "APIVersions"'),
 
     Scenario("K8-13", Kind.K8S, Repro.CONFIG, "system:anonymous bound to a ClusterRole",
@@ -533,7 +695,18 @@ SCENARIOS: list[Scenario] = [
             'echo "Secret stored in cleartext in etcd (no encryption-at-rest) ($MARKER)"; exit $ok')),
 
     Scenario("K8-18", Kind.K8S, Repro.VERSION, "pidfd FD-steal (seccomp unset + namespace not Restricted)",
-        "HIGH", triage_ref="D13", detect_fn=_kernel_precondition("pidfd FD-steal (CVE-2026-46333) needs a vulnerable kernel — verify against the advisory")),
+        "HIGH", triage_ref="D13",
+        detect_fn=_kernel_cna("CVE-2026-46333", introduced=(4, 10),
+                              fixes={(5, 10): (5, 10, 256), (5, 15): (5, 15, 207), (6, 1): (6, 1, 173),
+                                     (6, 6): (6, 6, 139), (6, 12): (6, 12, 89), (6, 18): (6, 18, 31),
+                                     (7, 0): (7, 0, 8)},
+                              mainline_fix=(7, 1, 0),
+                              backports=[((3, 16, 52), (3, 17, 0)), ((4, 4, 40), (4, 5, 0)),
+                                         ((4, 8, 16), (4, 9, 0)), ((4, 9, 1), (4, 10, 0))]),
+        note="CVE-2026-46333 — ptrace/exit race; pidfd_getfd() steals a dying privileged process's fds. "
+             "Kernel CNA record: introduced 4.10 (backported into 3.16.52, 4.4.40, 4.8.16, 4.9.1); fixed in "
+             "5.10.256, 5.15.207, 6.1.173, 6.6.139, 6.12.89, 6.18.31, 7.0.8, mainline 7.1. Distro kernels: "
+             "vendor advisory."),
 
     # --- dangerous RBAC grants to a non-system ServiceAccount (read-only RBAC correlation) ---
     Scenario("K8-19", Kind.K8S, Repro.CONFIG, "SA can create pods/exec (exec into any pod)",
